@@ -1,0 +1,10 @@
+{
+  "private_game_baseline": "803239368ebbf726f8669a506892089391d0a540",
+  "game_sha256": "53F4087860E0C3C618406091189D629200D3C564E374700D00D2796252ECB7CE",
+  "tested_R2_candidate_sha256": "A18E52DC242608C10F5A5BAE52078A3ADF9CEB9825981126952912D79B69DBA7",
+  "release_package_sha256": "6309D3E949488DBFD3068EFCA97FDB27ADBAEC18E0F06FF06391F77CAA2D0890",
+  "protocol": 1,
+  "sequence": 2,
+  "profile_credit": "ResidentMonster",
+  "final_packaging_changes": "Installer version identifier and README release wording only; bootstrap, runtime and all default-profile bytes are identical to tested R2."
+}
