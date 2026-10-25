@@ -1,0 +1,27 @@
+.vs/
+build/
+build-fmod/
+out/
+.vscode/
+*.user
+*.suo
+
+build-log.txt
+build-fmod-log.txt
+
+build-vr/
+
+# Local release/runtime and personal calibration files
+*.sdf
+*.pdb
+*.obj
+*.o
+*.dmp
+*.exe
+*.dll
+*.zip
+.vr_*
+log.txt
+crashlogs/
+vr_*.cfg
+!packaging/**/DefaultProfile/vr_*.cfg

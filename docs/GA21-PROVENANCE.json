@@ -1,0 +1,64 @@
+{
+  "baseline": "GA21",
+  "private_baseline_commit": "803239368ebbf726f8669a506892089391d0a540",
+  "executable_sha256": "53F4087860E0C3C618406091189D629200D3C564E374700D00D2796252ECB7CE",
+  "source_hashes": {
+    "src/acthudweapon.cpp": "4ACBDC1580BD7531F6CB2569746C892972F38E31B5C6C61C3A66F0549C230A91",
+    "src/actplayer.cpp": "7F5DDBF94F0B653BCCDE7EACFCDF48250FF0936BD1D2E586C3E0EAB2E6E29AA7",
+    "src/entity.cpp": "E14B166BF688A196663572B5ED27A866E3DFE34C44BCF152174ED283D61141DE",
+    "src/ui/Frame.cpp": "C53B31AB22EE2C99F6A31701ACEA192895C6ED54999BB351421AEB2E627EBF22",
+    "src/ui/Frame.hpp": "1D4B3B62148154EF5A75EBB7EA1F7E4009296AA1A259E2EEFD35ABE25F30787D",
+    "src/vr_native_hud.hpp": "137CE93FFAE2930D26EBFF42ABE8B63EE1C1D76CBC64D418B1A38CD887FFE064",
+    "src/vr_openxr.cpp": "90A21BD4BFD7E600819103655D3A6A662ECF7EC8017A0391B6BC2ECEB8BC6CAA"
+  },
+  "launcher_sha256": "C2FD96AC12DF6C8AE63D2E472F6B684DF1DE1DBDFC4249FFF78C65F653206D11",
+  "default_profile": [
+    {
+      "name": "vr_equipment_calibration.cfg",
+      "sha256": "5F3914077097BA7FA1FEA0511D42918E1FE1E58B970893FA75EC4A03A588DCE0",
+      "bytes": 4660
+    },
+    {
+      "name": "vr_body_calibration.cfg",
+      "sha256": "68157CAA832B358D7EDF692D349501936803F6302341359F2787CC4D39E3E38B",
+      "bytes": 103
+    },
+    {
+      "name": "vr_melee_calibration.cfg",
+      "sha256": "425D7D38D2ACA9DC9AAAA3220E831A9A0FE24C340DD3CA284B1E70AEA2DD6E1B",
+      "bytes": 91
+    },
+    {
+      "name": "vr_menu_pointer_alignment.cfg",
+      "sha256": "D536509E7FE389E62E15F1D134C6980FE3872E012A27353BF98CD2D1ECDFB346",
+      "bytes": 7
+    },
+    {
+      "name": "vr_settings.cfg",
+      "sha256": "65299CA0F7B96A71DE4D0ADC57AA1138A512988300E723810B998861CBF0D986",
+      "bytes": 319
+    }
+  ],
+  "steam_build": {
+    "appid": "371970",
+    "installdir": "Barony",
+    "LastUpdated": "1775204036",
+    "buildid": "22630456"
+  },
+  "build_flags": [
+    "CMAKE_BUILD_TYPE:STRING=Release",
+    "DATA_DIR:BOOL=OFF",
+    "FMOD_ENABLED:BOOL=ON",
+    "OPENAL_ENABLED:BOOL=OFF",
+    "STEAMWORKS:UNINITIALIZED=ON",
+    "STEAMWORKS_ENABLED:UNINITIALIZED=1",
+    "TREMOR_ENABLED:BOOL=OFF",
+    "VCPKG_TARGET_TRIPLET:STRING=x64-windows"
+  ],
+  "compiler_metadata": [
+    "set(CMAKE_CXX_COMPILER_ID \"MSVC\")",
+    "set(CMAKE_CXX_COMPILER_VERSION \"19.51.36260.0\")",
+    "set(CMAKE_CXX_SIZEOF_DATA_PTR \"8\")"
+  ],
+  "excluded": "Private history, databases, compiled objects, development notes, workflows, machine CMake settings, retail language/font data. SDKs and retail DLLs are not distributed."
+}
