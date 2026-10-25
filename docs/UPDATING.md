@@ -1,10 +1,10 @@
 # Publishing launcher updates
 
-Public Beta 2 introduces update protocol 1. Users of Public Beta 1 install Beta 2 manually once. Players do not need GitHub accounts or publisher credentials.
+BaronyVR 1.0.0 introduces update protocol 1. Users of earlier prereleases install 1.0.0 manually once. Players do not need GitHub accounts or publisher credentials.
 
 ## Release contract
 
-The launcher reads the ten most recent releases from `Nyxaroth37/BaronyVR`. Drafts are ignored; compatible prereleases are included. A release without the descriptor below is ignored. It selects the highest compatible numeric sequence above the installed sequence; publishing a source commit or a bare Git tag does nothing to installed players.
+The launcher reads the ten most recent releases from `Nyxaroth37/BaronyVR`. Drafts are ignored; prereleases are ignored. A release without the descriptor below is ignored. It selects the highest compatible numeric sequence above the installed sequence; publishing a source commit or a bare Git tag does nothing to installed players.
 
 Each published update needs these release assets:
 
@@ -18,15 +18,15 @@ Example descriptor:
 {
   "protocol": 1,
   "min_launcher": 1,
-  "version": "GA21-PublicBeta3",
-  "sequence": 3,
-  "tag": "ga21-public-beta3",
-  "package_name": "BaronyVR_GA21_PublicBeta3_Windows.zip",
+  "version": "BaronyVR-1.0.1",
+  "sequence": 4,
+  "tag": "v1.0.1",
+  "package_name": "BaronyVR_1.0.1_Windows.zip",
   "package_sha256": "64_HEXADECIMAL_CHARACTERS_FOR_THE_FINAL_ZIP"
 }
 ```
 
-`version` must be a safe folder name, beginning with an alphanumeric character and containing only letters, digits, underscores, periods, or hyphens. Do not reuse an existing version name for different contents. `sequence` is a globally increasing integer, separate from the human-readable name. Public Beta 2 uses sequence 2. Do not publish an update with the same or a lower sequence.
+`version` must be a safe folder name, beginning with an alphanumeric character and containing only letters, digits, underscores, periods, or hyphens. Do not reuse an existing version name for different contents. `sequence` is a globally increasing integer, separate from the human-readable name. BaronyVR 1.0.0 uses sequence 3. Do not publish an update with the same or a lower sequence.
 
 The ZIP's `payload.json` must use `update_protocol: 1`, the exact `version`, matching `release_sequence`, and SHA256 entries for every other included file. It must include `Runtime/barony.exe`, `Common.ps1`, `LaunchGame.ps1`, and the default profile. Rebuild manifests after the final byte changes and calculate the ZIP hash last. Do not include personal `installation.json`, state files, credentials, retail game assets, or proprietary retail DLLs.
 
@@ -47,8 +47,12 @@ Successful download, staging, check, and result work is removed. Abandoned tempo
 1. Run the Windows syntax checks and `Test-Updater.ps1`.
 2. Test fresh install, upgrade, offline play, rollback, and normal game exit.
 3. Confirm calibration/saves remain intact and managed folder retention is bounded.
-4. Publish source with its provenance, then upload the final ZIP, descriptor, and checksums to a draft prerelease.
+4. Publish source with its provenance, then upload the final ZIP, descriptor, and checksums to a draft release.
 5. Download and hash-check the uploaded assets before publishing.
 6. Exercise the public update feed and actual apply worker in a separate temporary installation. If that check fails, return the new release to draft for review.
 
-The Public Beta 2 publishing kit performs the upload/hash checks and isolated public-feed update/rollback check. Its temporary integration test does not launch the game or touch retail data. Failed test fixtures are retained for diagnosis; successful fixtures are removed.
+The BaronyVR 1.0.0 publishing kit performs the upload/hash checks and isolated public-feed update/rollback check. Its temporary integration test does not launch the game or touch retail data. Failed test fixtures are retained for diagnosis; successful fixtures are removed.
+
+Regression detail: Windows PowerShell Invoke-RestMethod can emit the entire release JSON array as one pipeline item. Assign that result directly before iterating it; do not add another array wrapper. Tests intentionally use Write-Output -NoEnumerate to reproduce this response shape.
+
+Version 1.0.0 is a stable release with internal sequence 3. The default channel now skips prereleases. Publish future automatic updates as stable releases with increasing sequences, e.g. v1.0.1 with sequence 4.

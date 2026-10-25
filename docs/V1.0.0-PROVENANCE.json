@@ -1,0 +1,13 @@
+{
+  "private_game_baseline": "803239368ebbf726f8669a506892089391d0a540",
+  "game_sha256": "53F4087860E0C3C618406091189D629200D3C564E374700D00D2796252ECB7CE",
+  "parent_source_commit": "bc833a897aa9e8ee9a36b8b34deb9ac92c9eca53",
+  "preserved_failed_draft": 423634666,
+  "package_sha256": "75AA3BBC8CE559EBC62CF98601A68DD89A17AAAD5834D8B6A46E514289F3CC16",
+  "public_version": "1.0.0",
+  "tag": "v1.0.0",
+  "protocol": 1,
+  "sequence": 3,
+  "creator": "ResidentMonster",
+  "changes": "REST array enumeration fix and regression; stable-only updates; public release identity; recognized shortcut migration with existing Barony icon. GA21 runtime/defaults unchanged."
+}
