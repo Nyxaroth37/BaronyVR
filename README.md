@@ -1,72 +1,48 @@
-# BaronyVR 1.0.0 — First Public Release
+# BaronyVR 1.0.1
 
-Native OpenXR PC VR for **Barony**, created by **ResidentMonster** (Nyxaroth37). This is an unofficial mod, not affiliated with or endorsed by Turning Wheel LLC. A purchased Steam copy of Barony is required.
+Unofficial native OpenXR PC VR for **Barony**, created by **ResidentMonster** (Nyxaroth37). Retail Steam Barony is required. Not affiliated with or endorsed by Turning Wheel LLC.
 
-## Download and play
+## Install or update
 
-Download **BaronyVR_1.0.0_Windows.zip** from [Releases](https://github.com/Nyxaroth37/BaronyVR/releases/tag/v1.0.0). GitHub's automatic Source code archives are for developers and do not contain the playable runtime.
+Download **BaronyVR_1.0.1_Windows.zip** from [the 1.0.1 release](https://github.com/Nyxaroth37/BaronyVR/releases/tag/v1.0.1), extract the entire ZIP, and double-click **Setup.cmd**. Confirm the detected retail folder and install the launcher. Use the **BaronyVR** desktop/Start menu shortcut afterward. GitHub's automatic source archives do not contain a playable runtime.
 
-1. Connect your headset to your Windows PC and start Steam and your active OpenXR runtime.
-2. Extract the entire ZIP and double-click **Setup.cmd**.
-3. Confirm the detected retail Barony folder and select **Install launcher**.
-4. Use **Open launcher** or the **BaronyVR** desktop/Start menu shortcut.
-5. Select **Play without updating**, or **Update and play** when a newer release is available.
-
-No Git, Visual Studio, source download, or compilation is required for players. The package is unsigned. Verify its origin and release checksum before deciding whether to run it; do not disable system protection.
+Existing 1.0.0 users can select **Update and play** in **BaronyVR.exe**. Published stable releases are checked without a GitHub account. Pushing source alone does not update players. Downloads are verified, offline play is available, and **Use previous version** selects the retained rollback runtime. Fresh players need no Git, Visual Studio or compilation. The package is unsigned.
 
 ## Compatibility
 
-| Requirement | Version 1.0.0 |
+| Requirement | 1.0.1 |
 | --- | --- |
-| Operating system | Windows x64 |
-| Retail game | Steam Barony build **22630456**; other builds are blocked |
-| Verified headset/runtime | **Quest 3 with SteamVR/OpenXR** |
-| Other headsets/controllers | Untested; compatibility and mappings are not promised |
-| Quest standalone | Not supported; a Windows PC VR connection is required |
-| Other stores | Epic/GOG builds are not supported by this release |
-| Dependencies | Active 64-bit OpenXR runtime and Microsoft Visual C++ x64 runtime |
+| OS | Windows x64 |
+| Retail | Steam Barony build **22630456**; other builds blocked |
+| Verified setup | Quest 3 with SteamVR/OpenXR, connected to a Windows PC |
+| Other headsets/controllers | Untested; mappings/compatibility not promised |
+| Standalone Quest / other stores | Not supported |
+| Dependencies | Active 64-bit OpenXR and Microsoft Visual C++ x64 runtime |
 
-## VR features
+## New in 1.0.1
 
-- Tracked head and hands, VR melee interactions, and shield blocking.
-- Wrist HP/mana and minimap, belt HUD, companion health displays, and skill notifications.
-- Equipment, bow, body, and HUD calibration.
-- Physical shortbow draw/release with selectable draw hand. A right draw hand holds the bow in the left hand, and vice versa.
-- Right thumb-rest touch plus left stick for cardinal D-pad input on compatible controllers. Lift your thumb to return to movement.
-- Native bumper interactions retained outside other VR input ownership; Quick Turn uses right-stick down rather than right grip.
+Native-art calibration tabs and labeled sliders; selected-arm size/placement controls; separate weapon/item/crosshair and HUD pages; headset-follow belt; opt-in experimental room-scale steps and headset-relative stick movement; default bottle equipping; 50% smaller held bottles; press-at-face Grip drinking in offline single-player. See [release notes](docs/RELEASE_NOTES_1.0.1.md) for controls and limits.
 
-Gameplay uses the accepted **GA21** baseline. Not every class, item, controller, or multiplayer combination has been tested. Physical shortbow handling is for singleplayer/host; clients retain the native fallback. Full VR bow aiming synchronization is not implemented. Bow offhand mesh presentation remains limited.
+Press **X+Y** for VR calibration. Body contains the room-scale tracking switch, which starts off each launch. Right thumb-rest touch plus left stick gives D-pad commands; lift your thumb for movement. Right-stick down gives Quick Turn. Physical bow draw/release uses the selected draw hand. Existing combat/blocking, wrist HP/mana/minimap, belt, companion and skill HUD paths are preserved.
 
-## Calibration and saves
+For drinking, equip a nonempty potion in the normal right weapon slot, raise the RIGHT controller near your face with Grip released, then **press Grip**. Release/repress for another drink; no tilt or dwell. Keep trigger released while drinking; normal equipped trigger throwing remains available. Native potion effects and consumption apply.
 
-The five bundled VR files are **ResidentMonster's saved defaults**, including seated mode and a right draw hand. Adjust proportions, equipment alignment, HUD placement, and handedness for yourself using calibration.
+## Settings and files
 
-Setup and launch create a default file **only when that file is missing**. Existing calibration and player edits are preserved. This release shares the retail game's ordinary configuration and saves. Back up important saves before trying a mod.
+All five VR default files are **ResidentMonster's latest saved calibration**, including **Standing** mode and a right bow draw hand. Adjust them for your body and controllers. Setup and launch copy a default only if its file is missing. Updates preserve existing calibration and saves. Calibration, ordinary configuration and saves remain in retail Barony, whose folder must stay writable.
 
-The launcher installs under `%LOCALAPPDATA%\BaronyVR\Managed\Launcher`. Runtime versions live under `%LOCALAPPDATA%\BaronyVR\Managed\Versions`. The retail EXE, DLLs, and artwork are not replaced. Steam and FMOD load from your own retail installation. Retail Barony must remain installed, and its directory must be writable for calibration, settings, saves, and logs.
+The launcher lives under `%LOCALAPPDATA%\BaronyVR\Managed\Launcher`; runtimes under `Managed\Versions`. The updater keeps active plus one previous managed runtime, removes verified owned temporary work, and preserves unexpected user files. Retail EXE/DLLs/artwork are not overwritten. Steam/FMOD load from the purchased retail installation. To uninstall, close the game/launcher, remove the shortcuts and Managed folder; retain retail calibration to preserve settings.
 
-## Updates, rollback, and cleanup
+## Known limits
 
-The launcher checks **published stable GitHub releases**, without requiring a GitHub login. Drafts and prereleases are skipped. Pushing a source commit does not update players.
+- Drinking and experimental room-scale/world grabbing are offline single-player pilots. Loose-object grabbing is not yet headset-confirmed. Motion-based throwing and backpack transfer are not implemented; native equipped-item throwing is available.
+- A thin overhead strip in room-scale and peripheral pop-in remain unresolved. Temporary visibility tests under Controls & Help reset on restart; they do not alter headset optics.
+- Physical shortbow remains single-player/host with native fallback for clients; full VR aim synchronization and some offhand presentation remain limited. First-run story display/skipping and broader multiplayer/headset/controller combinations need testing.
 
-**Update and play** verifies the downloaded package, installs it separately, and switches versions after validation. **Play without updating** remains available while checks run or when offline. **Use previous version** switches to the retained rollback runtime without resetting calibration or saves.
-
-Users of earlier prereleases need to run the 1.0.0 installer once to get the corrected updater. The recognized old beta shortcut is replaced with **BaronyVR**, rather than leaving duplicate shortcuts.
-
-Cleanup keeps the active and one previous managed runtime. Successful temporary work is removed; abandoned updater work is bounded and ages out. Saves, calibration, retail files, and development backups are never cleanup targets. Unexpected files and linked folders block deletion of that folder. Verified legacy installer and launcher folders are removed only with a rollback version retained and after a successful game exit.
-
-To remove the mod, close Barony and the launcher, remove the BaronyVR shortcuts, and delete `%LOCALAPPDATA%\BaronyVR\Managed`. Keep retail calibration files to retain your settings. Vanilla Barony remains installed.
-
-## Known limits and reports
-
-First-run story presentation/skipping in the headset and broader multiplayer combinations still need testing. Additional headset/controller profiles need verification. The version number does not imply universal headset support.
-
-Report issues through [Issues](https://github.com/Nyxaroth37/BaronyVR/issues). Include your retail build, headset, connection software, active OpenXR runtime, reproduction steps, and whether vanilla Barony is affected. `log.txt` and `crashlogs` are in retail Barony. Review logs for personal information before sharing; do not upload retail artwork, SDKs, or game binaries.
+Report reproduction steps, retail build, headset, PC connection software and OpenXR runtime in [Issues](https://github.com/Nyxaroth37/BaronyVR/issues). Review retail `log.txt`/crashlogs for personal information before sharing. Do not upload retail assets, SDKs or game binaries in issues.
 
 ## Source and attribution
 
-Game source derives from accepted GA21 commit `803239368ebbf726f8669a506892089391d0a540`; see [provenance](docs/GA21-PROVENANCE.json). The original development history remains private. Installer, updater, and C# launcher source are under `packaging/v1.0.0`. Runtime binaries are distributed as release assets rather than Git source files.
+The accepted GA33 working-tree source is published here, based on private GA21 commit `803239368ebbf726f8669a506892089391d0a540`. See [1.0.1 provenance](docs/V1.0.1-PROVENANCE.json), [updating](docs/UPDATING.md), `packaging/v1.0.1` for installer source and `tests/vr-v1.0.1` for focused C++ fixtures. Runtime binaries are release assets. Building requires C++17 and separately obtained enabled SDKs/dependencies; inherited machine-specific CMake paths still need configuration.
 
-Developers: see [publishing updates](docs/UPDATING.md). Building the game requires a C++17 Windows toolchain, dependencies, and separately obtained SDKs where enabled. The inherited CMake configuration still has a machine-specific vcpkg GLEW library path; the source snapshot is not a turnkey reproducible build setup.
-
-Barony source copyright belongs to Turning Wheel LLC and its contributors. See [LICENSE.txt](LICENSE.txt), component license files, and the release's Notices directory. [UPSTREAM_README.md](UPSTREAM_README.md) preserves the upstream announcement. The shortcut reuses Barony's existing icon; no new visual artwork was created. Retail game assets and proprietary retail runtime DLLs are not included in the download.
+Barony source belongs to Turning Wheel LLC and contributors. See [LICENSE.txt](LICENSE.txt), component license files, Notices and [upstream README](UPSTREAM_README.md). The existing Barony icon/artwork is reused; no new assets were generated. Proprietary retail binaries/artwork are not bundled.

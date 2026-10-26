@@ -56,3 +56,12 @@ The BaronyVR 1.0.0 publishing kit performs the upload/hash checks and isolated p
 Regression detail: Windows PowerShell Invoke-RestMethod can emit the entire release JSON array as one pipeline item. Assign that result directly before iterating it; do not add another array wrapper. Tests intentionally use Write-Output -NoEnumerate to reproduce this response shape.
 
 Version 1.0.0 is a stable release with internal sequence 3. The default channel now skips prereleases. Publish future automatic updates as stable releases with increasing sequences, e.g. v1.0.1 with sequence 4.
+
+
+## Version 1.0.1 checkpoint and future calibration defaults
+
+Version 1.0.1 uses sequence **4**, the accepted GA33 runtime and the new native calibration tabs. Its release provenance records all reviewed source hashes, runtime SHA256 and all five default-profile hashes. Installer source is under `packaging/v1.0.1`; earlier packaging directories remain historical.
+
+For every future update, capture **ResidentMonster's latest saved five VR calibration/settings files** from the verified test launch working directory after Barony closes. Verify copies by hash, package them as `DefaultProfile`, update provenance, and rerun fresh/missing-only seeding tests. Do not silently carry forward an old profile or reset existing players. Keep `Seed-Defaults` missing-only and preserve user edits/saves through install, update and rollback. Handedness and play mode in the captured defaults must be described accurately in that release's notes.
+
+The 1.0.1 release kit tests the real 1.0.0 updater against the local candidate before publication, then the anonymous public descriptor/download and original 1.0.0 apply worker after publication. Live-test failure returns the release to draft for investigation. Real headset validation remains separate from these updater tests.

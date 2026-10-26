@@ -3852,6 +3852,12 @@ bool behindCamera(const view_t& camera, real_t x, real_t y)
 	const uint32_t error = 30;
     const float aspect = (float)camera.winw / (float)camera.winh;
     const float wfov = std::max(90.f, (float)(fov + error) * aspect) * ((float)PI) / 180.f;
+#if defined(_WIN32) && !defined(EDITOR)
+    if(vrCameraTrackingEnabled) {
+        extern float vrGetConservativeVisibilityHalfAngle(float nativePitch);
+        return dot < cosf(vrGetConservativeVisibilityHalfAngle(static_cast<float>(camera.vang)));
+    }
+#endif
     const float c = cosf(wfov * 0.5f);
 
     return dot < c;

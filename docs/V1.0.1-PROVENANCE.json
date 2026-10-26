@@ -1,0 +1,41 @@
+{
+  "public_version": "1.0.1",
+  "tag": "v1.0.1",
+  "protocol": 1,
+  "sequence": 4,
+  "creator": "ResidentMonster",
+  "parent_source_commit": "86c3681c2cf07a6dfdb6fea07af381369879070a",
+  "private_base_commit": "803239368ebbf726f8669a506892089391d0a540",
+  "game_checkpoint": "GA33 accepted local working tree",
+  "game_sha256": "40C3D4F6940D77AB0482DCFF102DA1599EC0BB07A259253E2DD7D594403A139F",
+  "package_sha256": "F8B5C3A7C08C7213AC3A3852E9464B5D0E424389398F5F1B7B80F4636D2A4C2F",
+  "source_hashes": {
+    "src/acthudweapon.cpp": "4ACBDC1580BD7531F6CB2569746C892972F38E31B5C6C61C3A66F0549C230A91",
+    "src/actitem.cpp": "A82106EE63DC55867A49D78DD587024FBDD13B9D47C888BA76479F38CCC2B830",
+    "src/actplayer.cpp": "65FD2CEC21E5D4A549B76587FE5B81A55826D694541A9BF6C37BA9A486A3F392",
+    "src/draw.cpp": "7A530084E29B5DEB174BB1AF27844713C1D9F917ED0F42FD8B5D05D32B3172F0",
+    "src/entity.cpp": "E14B166BF688A196663572B5ED27A866E3DFE34C44BCF152174ED283D61141DE",
+    "src/game.cpp": "227D11ABD7E2DD05D37727E0DA25B48EE8EA0EE3074666D86E080377B11721D7",
+    "src/interface/drawstatus.cpp": "02319B59B772477CC5E6D0D2952FB6279C8FA89E50DE9883E1E69B6159A7909E",
+    "src/interface/playerinventory.cpp": "BA558CCE51521894D262E018ABD9B7263FCB89ADAA0A38304AFB06FC7B1FC9A6",
+    "src/ui/Frame.cpp": "C53B31AB22EE2C99F6A31701ACEA192895C6ED54999BB351421AEB2E627EBF22",
+    "src/ui/Frame.hpp": "1D4B3B62148154EF5A75EBB7EA1F7E4009296AA1A259E2EEFD35ABE25F30787D",
+    "src/vr_calibration_menu.hpp": "B3BCF22EA365077578B375B28DB34A7E984106AA2D55180C440733CA4C2CE8FA",
+    "src/vr_native_hud.hpp": "137CE93FFAE2930D26EBFF42ABE8B63EE1C1D76CBC64D418B1A38CD887FFE064",
+    "src/vr_openxr.cpp": "23E768CD5C1692459D5D071B7780544645F7F1543EFAF797128624FB9CDE4363"
+  },
+  "default_profile_hashes": {
+    "vr_body_calibration.cfg": "A67A96D274091A36CAD8E6194412858C8C4E14D49575CDB93D31FF4E57234EFF",
+    "vr_equipment_calibration.cfg": "34E0ED2B4A97160E7074F75C34918DCFFD5091D3F01C6DD23284069EF750AA65",
+    "vr_melee_calibration.cfg": "425D7D38D2ACA9DC9AAAA3220E831A9A0FE24C340DD3CA284B1E70AEA2DD6E1B",
+    "vr_menu_pointer_alignment.cfg": "D536509E7FE389E62E15F1D134C6980FE3872E012A27353BF98CD2D1ECDFB346",
+    "vr_settings.cfg": "4FD20F11C386D556481F1E3B6B30007DA5B3EF14E7430BE70266902240C064EA"
+  },
+  "default_policy": "Seed only missing files; preserve existing player calibration and saves.",
+  "headset_validation": "Developer confirmed GA33 grip-at-face drink and accepted GA31 50% held bottle size.",
+  "known_limits": [
+    "World grabbing not headset-confirmed; motion throwing/backpack transfer not implemented.",
+    "Room-scale overhead strip and peripheral pop-in unresolved.",
+    "Drinking and room-scale/world-grab pilot restricted to offline single-player."
+  ]
+}

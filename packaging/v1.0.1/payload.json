@@ -1,0 +1,346 @@
+{
+  "version": "BaronyVR-1.0.1",
+  "release_sequence": 4,
+  "update_protocol": 1,
+  "baseline_commit": "803239368ebbf726f8669a506892089391d0a540",
+  "files": [
+    {
+      "path": "Bootstrap/ApplyUpdate.ps1",
+      "sha256": "EAFEF087C04BBD61EEDD9CA454FA8595533CDE83CB6F5C84861F334492ECFC5A"
+    },
+    {
+      "path": "Bootstrap/Barony.ico",
+      "sha256": "8E77BD489CDFEDEADCF64ABAC2725753865F4F82D58D938AB7C86948E6658937"
+    },
+    {
+      "path": "Bootstrap/BaronyVR.exe",
+      "sha256": "C2FD96AC12DF6C8AE63D2E472F6B684DF1DE1DBDFC4249FFF78C65F653206D11"
+    },
+    {
+      "path": "Bootstrap/CheckUpdates.ps1",
+      "sha256": "93B0227B25672129FAAF55E510D5C67AA8391DF60797A8CA5BEA61C2B1963844"
+    },
+    {
+      "path": "Bootstrap/Launch.ps1",
+      "sha256": "EC4268BB29D2CCC3FE34EE40743A5FDDDCF64AECD8320376C4185D37A6D91A62"
+    },
+    {
+      "path": "Bootstrap/UiLoop.ps1",
+      "sha256": "5007E7AD0526F55DAF46036B400419C2E1642009DFE23948FC7D38E789E858A6"
+    },
+    {
+      "path": "Bootstrap/UpdateCore.ps1",
+      "sha256": "661527537A3568A23D00FB517CF2988EBBDE7B38EDCB280A06B64AE7CBDAF0BE"
+    },
+    {
+      "path": "Bootstrap/bootstrap-manifest.json",
+      "sha256": "B0243CC4BFD95688B329A5BCB2784E97B5BC17994AF9242EE99B2AEEE7B95153"
+    },
+    {
+      "path": "Common.ps1",
+      "sha256": "82EED780B3ACF7922CC180CBF879DC427093EF0C2435FC896C77CC330232FF23"
+    },
+    {
+      "path": "DefaultProfile/vr_body_calibration.cfg",
+      "sha256": "A67A96D274091A36CAD8E6194412858C8C4E14D49575CDB93D31FF4E57234EFF"
+    },
+    {
+      "path": "DefaultProfile/vr_equipment_calibration.cfg",
+      "sha256": "34E0ED2B4A97160E7074F75C34918DCFFD5091D3F01C6DD23284069EF750AA65"
+    },
+    {
+      "path": "DefaultProfile/vr_melee_calibration.cfg",
+      "sha256": "425D7D38D2ACA9DC9AAAA3220E831A9A0FE24C340DD3CA284B1E70AEA2DD6E1B"
+    },
+    {
+      "path": "DefaultProfile/vr_menu_pointer_alignment.cfg",
+      "sha256": "D536509E7FE389E62E15F1D134C6980FE3872E012A27353BF98CD2D1ECDFB346"
+    },
+    {
+      "path": "DefaultProfile/vr_settings.cfg",
+      "sha256": "4FD20F11C386D556481F1E3B6B30007DA5B3EF14E7430BE70266902240C064EA"
+    },
+    {
+      "path": "LaunchGame.ps1",
+      "sha256": "E21FC28C7A3A86FDBB6839E586EA6F276AD570E9A0FCF850E2CFB67939BFDDAD"
+    },
+    {
+      "path": "Notices/Barony/LICENSE.SDL2_ttf.txt",
+      "sha256": "6C960491A9040124A87C9C0DC67111E8168C8B8374F1FC6D2BDF3A02B0D894CD"
+    },
+    {
+      "path": "Notices/Barony/LICENSE.curl.txt",
+      "sha256": "B1D7FEB949EA5023552029FBE0BF5DB4F23C2F85E9B8E51E18536F0ECBF9C524"
+    },
+    {
+      "path": "Notices/Barony/LICENSE.freetype.txt",
+      "sha256": "7E8BC99DD13B4C2F6A5F7B8129EBB56BEFFA188C80C134127AAB64CE7F53D225"
+    },
+    {
+      "path": "Notices/Barony/LICENSE.libtheora.txt",
+      "sha256": "2CF6A1C6E4216FAFBCCBCC921D1BAFAF10DBFCD05DCDD52046729582CB1FFC54"
+    },
+    {
+      "path": "Notices/Barony/LICENSE.libtheoraplayer.txt",
+      "sha256": "30C6305703102FBE0F71A8B8D2807471C279C06393EDFE1EEA244EC75FED5CFE"
+    },
+    {
+      "path": "Notices/Barony/LICENSE.nativefiledialog.txt",
+      "sha256": "5425B4AFD8F4214887610E9B2AF94F6ACAC8F4DB44A3F88DB22AD921EBC7986B"
+    },
+    {
+      "path": "Notices/Barony/LICENSE.opus.txt",
+      "sha256": "01E1167D54A096D123CF6DFBBEB19587278845C6481D2D66D545669846079551"
+    },
+    {
+      "path": "Notices/Barony/LICENSE.physfs.txt",
+      "sha256": "434B1AE5E89BDC0BCC4FDF19ACC0796AE6A26C9F810CD7D75F77843A6925A64B"
+    },
+    {
+      "path": "Notices/Barony/LICENSE.txt",
+      "sha256": "E7C73D7543E648304FCEAD909DF9D4DA56AE1556CC3A1BED0AFA76E6DF0C1449"
+    },
+    {
+      "path": "Notices/Barony/LICENSE.zlib.txt",
+      "sha256": "D8CD155CF8E962A3BD02DBD2143E5B92F0BC3AB4AE1D5549F94D2253BED75B46"
+    },
+    {
+      "path": "Notices/vcpkg/root0/brotli/copyright",
+      "sha256": "3D180008E36922A4E8DAEC11C34C7AF264FED5962D07924AEA928C38E8663C94"
+    },
+    {
+      "path": "Notices/vcpkg/root0/brotli/vcpkg.spdx.json",
+      "sha256": "9FE50D2D85776758D8B78FA079ACCD419B86588EB685DA7D42A001CB95169DD9"
+    },
+    {
+      "path": "Notices/vcpkg/root0/bzip2/copyright",
+      "sha256": "C6DBBF828498BE844A89EAA3B84ADBAB3199E342EB5CB2ED2F0D4BA7EC0F38A3"
+    },
+    {
+      "path": "Notices/vcpkg/root0/bzip2/vcpkg.spdx.json",
+      "sha256": "57869DDFCD09FEB9AE5DC04E932812D65F4ADFFA88D1533330CCFE2FFD873AF5"
+    },
+    {
+      "path": "Notices/vcpkg/root0/dirent/copyright",
+      "sha256": "2F414F6C48E8C25FFB5D03CDDD6043B3B613187F758D0A6964CA2AD7ED749E50"
+    },
+    {
+      "path": "Notices/vcpkg/root0/dirent/vcpkg.spdx.json",
+      "sha256": "27D80159E1B7A3E087017C0085E5B8981652BBCD141D185DC807A83A71406C6F"
+    },
+    {
+      "path": "Notices/vcpkg/root0/egl-registry/copyright",
+      "sha256": "5D77554FFC974CE346430A01A30BE8176CA5C46FB1B53A7233291195DED592D3"
+    },
+    {
+      "path": "Notices/vcpkg/root0/egl-registry/vcpkg.spdx.json",
+      "sha256": "637ACD9A52F6C22AF24C113588632B4B20C41B464BA2B9B9729DE023F0B621A3"
+    },
+    {
+      "path": "Notices/vcpkg/root0/freetype/copyright",
+      "sha256": "CF82ED29473C1FD8E137FD34250F89EEBF2BEE9E126FA004286DD25495D5C654"
+    },
+    {
+      "path": "Notices/vcpkg/root0/freetype/vcpkg.spdx.json",
+      "sha256": "5AD3E1EBA3B984D6E6AB311B159A9F53E9179A604DCC2AD76A81FC42A424E135"
+    },
+    {
+      "path": "Notices/vcpkg/root0/glew/copyright",
+      "sha256": "8991CD11BEFEC7C6A63662700F03C0CC42E864B6E77C7E70B80297C951A7F0FF"
+    },
+    {
+      "path": "Notices/vcpkg/root0/glew/vcpkg.spdx.json",
+      "sha256": "A10ED97E530044F07C489FB00E589836E6AD7C958EF9857F3B70A868C09092D0"
+    },
+    {
+      "path": "Notices/vcpkg/root0/jsoncpp/copyright",
+      "sha256": "CEC0DB5F6D7ED6B3A72647BD50AED02E13C3377FD44382B96DC2915534C042AD"
+    },
+    {
+      "path": "Notices/vcpkg/root0/jsoncpp/vcpkg.spdx.json",
+      "sha256": "B2C06A998398DD36283B7A7EB3BBF8927B74D13AD5D97275C0C69339098B2DA9"
+    },
+    {
+      "path": "Notices/vcpkg/root0/libpng/copyright",
+      "sha256": "BDB0A645EA18C60507D0368379B1AC5474B92255FCC2D115E07486A7672BA526"
+    },
+    {
+      "path": "Notices/vcpkg/root0/libpng/vcpkg.spdx.json",
+      "sha256": "D9EEA0A773DE143A47BFD51037C9FA49FAA814336DD77E5F346E46F831ECB3F0"
+    },
+    {
+      "path": "Notices/vcpkg/root0/opengl/copyright",
+      "sha256": "222B59AA68905B150C26ECE05550B48390EF40791AC9E13ABBC194CDD60B5C54"
+    },
+    {
+      "path": "Notices/vcpkg/root0/opengl/vcpkg.spdx.json",
+      "sha256": "41200753F81DCAB6287C46CC61002155073BD1A098BD56E3EB7A0A0490CAADBD"
+    },
+    {
+      "path": "Notices/vcpkg/root0/opengl-registry/copyright",
+      "sha256": "C56FFB0CC40BD972C1B2D4759828B89F7860471F5BA52EEDDE7A4DDB4664CEF5"
+    },
+    {
+      "path": "Notices/vcpkg/root0/opengl-registry/vcpkg.spdx.json",
+      "sha256": "D2FF527BDC6B560E5715A8ED0A2B4CEC87440C515940A1369A0B7B19F9998679"
+    },
+    {
+      "path": "Notices/vcpkg/root0/openxr-loader/copyright",
+      "sha256": "1A2FDC61455D4280A55C642F11E1BA6E5797B8D5BBA46F8CE554C9016BB51595"
+    },
+    {
+      "path": "Notices/vcpkg/root0/openxr-loader/vcpkg.spdx.json",
+      "sha256": "D06D86B2954B73F8E4B9776F9CE3EB808F5AF86AAC93165BFAE72B81D775DE84"
+    },
+    {
+      "path": "Notices/vcpkg/root0/physfs/copyright",
+      "sha256": "111B286674AB4720FD1B693EF8628A94BCA8F06484D5FE3D75BD6DB22FDC1CB2"
+    },
+    {
+      "path": "Notices/vcpkg/root0/physfs/vcpkg.spdx.json",
+      "sha256": "EE5388CD0AE582EA596994C9477412F21B2A64DBAC4AEC5313E69DBDDBEA7974"
+    },
+    {
+      "path": "Notices/vcpkg/root0/rapidjson/copyright",
+      "sha256": "A140E5D46FE734A1C78F1A3C3EF207871DD75648BE71FDDA8E309B23AB8B1F32"
+    },
+    {
+      "path": "Notices/vcpkg/root0/rapidjson/vcpkg.spdx.json",
+      "sha256": "5E2528341BA1A2CC36D5E7F27C48294B48003AB99652257B2AF06AAFE0CF5FA6"
+    },
+    {
+      "path": "Notices/vcpkg/root0/sdl2/copyright",
+      "sha256": "97F35B302B361680EC1E891E95D2D52097BB95ABFF361434916D99DC1305F127"
+    },
+    {
+      "path": "Notices/vcpkg/root0/sdl2/vcpkg.spdx.json",
+      "sha256": "BB505583716719D4A2B0D1F36C82F992C6A85EDF81D6B5C48F7CC68D3CB39776"
+    },
+    {
+      "path": "Notices/vcpkg/root0/sdl2-image/copyright",
+      "sha256": "7826ECA0A0F7E591F38DD844E207A200AAC81A59B20D8A30C3AF8C6282AF13E6"
+    },
+    {
+      "path": "Notices/vcpkg/root0/sdl2-image/vcpkg.spdx.json",
+      "sha256": "370CF3909F0C3A130EDFB57FD6D43E5BBF4C633134CD04F24A450C23FF1EE161"
+    },
+    {
+      "path": "Notices/vcpkg/root0/sdl2-net/copyright",
+      "sha256": "FCB07E07AC6BC8B2FCF047B50431EF4EBE5B619D7CA7C82212018309A9067426"
+    },
+    {
+      "path": "Notices/vcpkg/root0/sdl2-net/vcpkg.spdx.json",
+      "sha256": "D5720D3D4925E2181951B7243A755A3FA790BE53F20EAA49A5BDC9BD72DE7A54"
+    },
+    {
+      "path": "Notices/vcpkg/root0/sdl2-ttf/copyright",
+      "sha256": "7826ECA0A0F7E591F38DD844E207A200AAC81A59B20D8A30C3AF8C6282AF13E6"
+    },
+    {
+      "path": "Notices/vcpkg/root0/sdl2-ttf/vcpkg.spdx.json",
+      "sha256": "CDC1BEE8E93478E3107F7E43BC15110D2AB32F20760ACA55CDC9C485F222239B"
+    },
+    {
+      "path": "Notices/vcpkg/root0/vcpkg-cmake/copyright",
+      "sha256": "1EE376FC340E0AA6AD6A3581C94126E741468705096AC92263048A21DAA86460"
+    },
+    {
+      "path": "Notices/vcpkg/root0/vcpkg-cmake/vcpkg.spdx.json",
+      "sha256": "3A6D2C54D0C6C70422CC350ACD5B8D4343C3311B559B85993C0B204E1177650B"
+    },
+    {
+      "path": "Notices/vcpkg/root0/vcpkg-cmake-config/copyright",
+      "sha256": "04B60F99A43BFD7FEFDC8364B24AAC704A2160CEF969B75BA6A38B62DC4C4B70"
+    },
+    {
+      "path": "Notices/vcpkg/root0/vcpkg-cmake-config/vcpkg.spdx.json",
+      "sha256": "12338D2132EE23E7A673233BF197D45780B711B6C835432BAD51F3D541FF2249"
+    },
+    {
+      "path": "Notices/vcpkg/root0/zlib/copyright",
+      "sha256": "E32FF4E00D9D94930537635291DA39E7E612703334BF6FDE8C7F1686FE8A45A2"
+    },
+    {
+      "path": "Notices/vcpkg/root0/zlib/vcpkg.spdx.json",
+      "sha256": "82228D255D21372592ADBB893C4C50A94419285F62C3F9A242369BF0F147F4BE"
+    },
+    {
+      "path": "README.txt",
+      "sha256": "2725D5F40441C4C66893F8E893FDAD1BEB0918F844A3C835BD6DB0B35690AE88"
+    },
+    {
+      "path": "Runtime/SDL2.dll",
+      "sha256": "34E0068BD21073D974C706412E2EBE2B11BE9E0F27D49C51097968F1C9743142"
+    },
+    {
+      "path": "Runtime/SDL2_image.dll",
+      "sha256": "8DC0F6CD173963794127B207A95674A3A6EEE62CCE39FEAB744666F9311E0F49"
+    },
+    {
+      "path": "Runtime/SDL2_net.dll",
+      "sha256": "B2E55E91F4BA2DC6EBD6C487D8EE3A685744A52D42626ABE9BDB19399DA6B23E"
+    },
+    {
+      "path": "Runtime/SDL2_ttf.dll",
+      "sha256": "B06DFB8149D2A8B3B6EC178F544CD0FA37FE9716B44F78B155BE9A4D4C2AF203"
+    },
+    {
+      "path": "Runtime/barony.exe",
+      "sha256": "40C3D4F6940D77AB0482DCFF102DA1599EC0BB07A259253E2DD7D594403A139F"
+    },
+    {
+      "path": "Runtime/brotlicommon.dll",
+      "sha256": "F2248B59F355220EB241AD14CD9D7881E4AF5535B8641FD2B90981B79A7D27DB"
+    },
+    {
+      "path": "Runtime/brotlidec.dll",
+      "sha256": "987E4C1EB048FE292F834E98E83C71E2E1979AEA40AA004220C09C98A83D0C47"
+    },
+    {
+      "path": "Runtime/bz2.dll",
+      "sha256": "AA830EB6CD7FB22046111C04AE572DF7539452A10BC6844B337F44CCC5FA83A7"
+    },
+    {
+      "path": "Runtime/freetype.dll",
+      "sha256": "6BEE8DED5D69541AFD31AF950AED21CFB3D31B26BBB6C7D3542EB134C4A57C30"
+    },
+    {
+      "path": "Runtime/glew32.dll",
+      "sha256": "46B60B3ED985D4FB9B804F3D5682CD216E3735A9A47EFB088B6F0FD7F633C4D0"
+    },
+    {
+      "path": "Runtime/jsoncpp.dll",
+      "sha256": "01706AEC9161F3B9A81544943C0215DB2165A3EF1E05DBC1EA17883662FE40AD"
+    },
+    {
+      "path": "Runtime/libpng16.dll",
+      "sha256": "53DD576B58A2EE032631227B99D4A1A573DC8354DE81281D8B45CCB5B406322D"
+    },
+    {
+      "path": "Runtime/openxr_loader.dll",
+      "sha256": "0A614C72F05A052860A1310774B6BEF1795E299C40CA4EE54BE9D2BE9DE5C3A3"
+    },
+    {
+      "path": "Runtime/physfs.dll",
+      "sha256": "A3E2CB6EB89CD9250C5F10D3BFC07190F1978E4C9D36A4EF8CE0A69D616FA554"
+    },
+    {
+      "path": "Runtime/z.dll",
+      "sha256": "49734C89F0B3465635C95DD656D602074E2C7BC39736A0CA441E27D01CD25904"
+    },
+    {
+      "path": "Setup.cmd",
+      "sha256": "62FF954E1D634DB5DB16E993AB583FFE3BFF499A3AAF87089AA830F5E01E39B0"
+    },
+    {
+      "path": "Setup.ps1",
+      "sha256": "701C246D4FE51CCC0C3E94083420979E431EF65F1208EF011C014FD04B7F2840"
+    },
+    {
+      "path": "Test-Updater.ps1",
+      "sha256": "CA309E1E74608DA6EB6881378A2296FC2D420BB9B19468B17639F6C1D9C7C885"
+    }
+  ],
+  "game_checkpoint": "GA33",
+  "creator": "ResidentMonster"
+}

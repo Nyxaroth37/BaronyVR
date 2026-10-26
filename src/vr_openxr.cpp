@@ -22,6 +22,7 @@
 #include "interface/interface.hpp" // Detect native shrine and interaction overlays (GenericGUI).
 #include "stat.hpp" // Offhand equipment check for crouch-to-sneak safety.
 #include "items.hpp" // Use the actual item category when selecting tracked equipment.
+#include "collision.hpp" // GA24: native line-of-sight and held-item collision checks.
 #include "entity.hpp" // Render the existing first-person hand entity as tracked 3D geometry.
 #include "mod_tools.hpp" // Read native breakable-collider definitions for training barrel.
 #include "magic/magic.hpp" // Barony magic projectile XYZ motion and casting state.
@@ -519,6 +520,13 @@ static float g_xrRoomStickX = 0.0f;
 static float g_xrRoomStickY = 0.0f;
 static XrVector3f g_xrRoomPreviousHead{};
 static XrTime g_xrRoomPreviousTime = 0;
+static constexpr float VR_TRACKING_UNITS_PER_METER=8.0f;
+// GA30 temporary diagnosis only; never saved to a player profile.
+static bool g_vrVisibilityProbeFull=false;
+static bool g_vrSpatialHudProbeHidden=false;
+static bool g_vrRoomScaleEnabled=false; // opt-in test, not a saved default
+static bool g_vrRoomScaleActive=false;
+static bool g_vrRoomScaleRebase=true;
 // STEP638FX: The vanilla Hermit Fowl Spirit owns the dungeon camera during
 // projection. Remember the transition out so VR can use the original body
 // viewpoint while Barony's ordinary camera catches up; never edit game state.
@@ -641,6 +649,7 @@ static void vrLoadModeSettings()
 
 static void vrRequestRoomCalibration()
 {
+    g_vrRoomScaleRebase=true;
     g_xrRoomRecalibrate = true;
     g_xrRoomCalibrated = false;
     g_xrRoomHavePreviousPose = false;
@@ -1901,6 +1910,14 @@ static const Item* vrCalibrationEquippedItem(int hand)
     if (hand == 1 && item && itemCategory(item) == SPELLBOOK) return nullptr;
     return item;
 }
+// GA30: only the local player's active VR UI prefers holding a bottle.
+// Do not change isPotionBad(), native potion effects, or explicit Drink.
+bool vrPreferBottleEquip(int playerIndex) {
+    return playerIndex==clientnum && playerIndex>=0 && playerIndex<MAXPLAYERS &&
+        players[playerIndex] && players[playerIndex]->isLocalPlayer() &&
+        g_xrSession!=XR_NULL_HANDLE && g_xrSessionRunning && g_xrControllerActionsAttached;
+}
+
 // STEP612: Barony's thrown category is not isRangedWeapon(): it includes
 // chakrams, shurikens, tomahawks, and more. Other thrown paths include
 // gems/rocks, potions/bottles, pies, tinkering throwables and rubber ducks.
@@ -2159,6 +2176,176 @@ static void vrSpawnCalibrationBarrel()
         kind, trainingName.c_str());
 }
 
+static bool vrMenuPointerMode();
+
+// GA26: sample XR displacement during rendering, but commit it only before
+// Barony substitutes temporary interpolated entity positions for drawing.
+namespace VrRoomScale {
+struct State {
+    bool calibrated=false;
+    Uint32 owner=0;
+    int level=-1;bool secret=false;
+    XrVector3f previous{};
+    XrTime previousTime=0;
+    double pendingX=0,pendingY=0;
+    Uint32 pendingAt=0;
+    float baselineY=0.f;
+    double baselineCameraZ=0,baselinePlayerZ=0;
+};
+static State state;
+static bool supported() {
+    return multiplayer==SINGLE && !splitscreen && !intro &&
+        clientnum>=0 && clientnum<MAXPLAYERS && players[clientnum] &&
+        players[clientnum]->entity && stats[clientnum] && stats[clientnum]->HP>0 &&
+        !players[clientnum]->ghost.isActive() &&
+        players[clientnum]->entity->effectShapeshift==NOTHING &&
+        !stats[clientnum]->getEffectActive(EFF_SHAPESHIFT) &&
+        !stats[clientnum]->getEffectActive(EFF_PROJECT_SPIRIT);
+}
+static bool movementAllowed() {
+    return !gamePaused && !g_vrArmCalibrationActive && players[clientnum]->shootmode &&
+        players[clientnum]->bControlEnabled && !players[clientnum]->usingCommand() &&
+        !vrMenuPointerMode() && players[clientnum]->entity->isMobile();
+}
+static void clearPending() { state.pendingX=state.pendingY=0;state.pendingAt=0; }
+// Called by game.cpp with real simulation coordinates, BEFORE updateClocks()
+// and BEFORE the render-only x/y substitutions. No OpenXR wait/input calls.
+static void applyPending() {
+    const double vx=state.pendingX,vy=state.pendingY;
+    const Uint32 queuedAt=state.pendingAt;
+    clearPending(); // consume exactly once, including rejected requests
+    if(!g_vrRoomScaleEnabled || !g_vrRoomScaleActive || g_vrRoomScaleRebase ||
+        g_xrPlayMode!=VrPlayMode::Standing || !supported() ||
+        !g_xrSessionRunning || g_xrSessionState!=XR_SESSION_STATE_FOCUSED ||
+        !g_xrEyeViewsValid || !movementAllowed() ||
+        !state.calibrated || state.owner!=players[clientnum]->entity->getUID() ||
+        state.level!=currentlevel || state.secret!=secretlevel ||
+        !queuedAt || SDL_GetTicks()-queuedAt>150u ||
+        !std::isfinite(vx) || !std::isfinite(vy) || vx*vx+vy*vy>1.081601)return;
+    if(vx==0 && vy==0)return;
+    Entity* body=players[clientnum]->entity;
+    const double oldX=body->x,oldY=body->y;
+    const hit_t saved=hit;
+    clipMove(&body->x,&body->y,vx,vy,body);
+    hit=saved;
+    const double movedX=body->x-oldX,movedY=body->y-oldY;
+    if(movedX!=0 || movedY!=0) {
+        // Entity interpolation is in tile coordinates. Shift every snapshot by
+        // the COLLISION-RESOLVED delta, preserving normal velocity/animation.
+        // Otherwise the subsequent render pass would show the old location.
+        if(TimerExperiments::bUseTimerInterpolation && body->bUseRenderInterpolation) {
+            for(auto* sample:{&body->lerpPreviousState,&body->lerpCurrentState,&body->lerpRenderState}) {
+                sample->x.position+=movedX/16.0;
+                sample->y.position+=movedY/16.0;
+            }
+        }
+        TileEntityList.updateEntity(*body);
+    }
+    static Uint32 lastReport=0;
+    static double requested=0,applied=0;
+    requested+=std::sqrt(vx*vx+vy*vy)/VR_TRACKING_UNITS_PER_METER;
+    applied+=std::sqrt(movedX*movedX+movedY*movedY)/VR_TRACKING_UNITS_PER_METER;
+    if(SDL_GetTicks()-lastReport>=1500u) {
+        printlog("[VR GA26] room movement committed requestedTravel=%.3fm appliedTravel=%.3fm interpolation=%d",
+            requested,applied,TimerExperiments::bUseTimerInterpolation && body->bUseRenderInterpolation?1:0);
+        requested=applied=0;lastReport=SDL_GetTicks();
+    }
+}
+static void update(XrTime time) {
+    g_vrRoomScaleActive=false;
+    if(!g_vrRoomScaleEnabled || g_xrPlayMode!=VrPlayMode::Standing || !supported() ||
+        !g_xrSessionRunning || g_xrSessionState!=XR_SESSION_STATE_FOCUSED || !g_xrEyeViewsValid) {
+        state.previousTime=0;clearPending();return;
+    }
+    const XrVector3f head{
+        (g_xrViews[0].pose.position.x+g_xrViews[1].pose.position.x)*.5f,
+        (g_xrViews[0].pose.position.y+g_xrViews[1].pose.position.y)*.5f,
+        (g_xrViews[0].pose.position.z+g_xrViews[1].pose.position.z)*.5f};
+    if(!std::isfinite(head.x) || !std::isfinite(head.y) || !std::isfinite(head.z)){state.previousTime=0;clearPending();return;}
+    Entity* body=players[clientnum]->entity;
+    auto& camera=cameras[clientnum];
+    if(g_vrRoomScaleRebase || !state.calibrated || state.owner!=body->getUID() ||
+        state.level!=currentlevel || state.secret!=secretlevel) {
+        state=State{};state.calibrated=true;state.owner=body->getUID();
+        state.level=currentlevel;state.secret=secretlevel;
+        state.baselineY=head.y;state.baselineCameraZ=camera.z;state.baselinePlayerZ=body->z;
+        g_vrRoomScaleRebase=false;
+        printlog("[VR GA26] room origin captured headY=%.3fm cameraZ=%.3f scale=%.1f units/m",
+            static_cast<double>(head.y),static_cast<double>(camera.z),static_cast<double>(VR_TRACKING_UNITS_PER_METER));
+    }
+    const bool moveAllowed=movementAllowed();
+    if(!moveAllowed)clearPending();
+    if(state.previousTime && moveAllowed) {
+        const double dt=static_cast<double>(time-state.previousTime)/1.e9;
+        const float dx=head.x-state.previous.x,dz=head.z-state.previous.z;
+        const float distance=sqrtf(dx*dx+dz*dz);
+        // Ignore a tracking reset/jump or frame gap instead of teleporting.
+        if(dt>=.004 && dt<=.060 && distance<.13f) {
+            const float c=cosf(camera.ang),s=sinf(camera.ang);
+            const double vx=VR_TRACKING_UNITS_PER_METER*(-dz*c-dx*s);
+            const double vy=VR_TRACKING_UNITS_PER_METER*(-dz*s+dx*c);
+            state.pendingX+=vx;state.pendingY+=vy;
+            state.pendingAt=SDL_GetTicks();
+            // Bound an unexpected backlog; never teleport after a delayed frame.
+            if(state.pendingX*state.pendingX+state.pendingY*state.pendingY>1.081601)clearPending();
+        } else {
+            clearPending();
+        }
+    }
+    // Always consume pose deltas during menus/calibration, so closing a menu
+    // cannot apply a backlog of physical movement to the character.
+    state.previous=head;state.previousTime=time;
+    g_vrRoomScaleActive=true;
+    // Native camera interpolation must not lag collision-resolved body motion.
+    // Only horizontal body location is shared with the native camera; tracked
+    // eye height is applied to VR view copies and interaction camera copies.
+    camera.x=body->x/16.0;camera.y=body->y/16.0;
+    static Uint32 lastReport=0;
+    const Uint32 now=SDL_GetTicks();
+    if(now-lastReport>=1500u) {
+        lastReport=now;
+        printlog("[VR GA26] tracked pose headDeltaY=%.3fm body=(%.2f %.2f %.2f) nativeCameraZ=%.3f moveAllowed=%d",
+            static_cast<double>(head.y-state.baselineY),static_cast<double>(body->x),
+            static_cast<double>(body->y),static_cast<double>(body->z),static_cast<double>(camera.z),moveAllowed?1:0);
+    }
+}
+static void setEnabled(bool enabled) {
+    if(g_vrRoomScaleEnabled==enabled)return;
+    g_vrRoomScaleEnabled=enabled;g_vrRoomScaleRebase=true;g_vrRoomScaleActive=false;
+    state.previousTime=0;clearPending();
+    if(enabled && g_xrPlayMode!=VrPlayMode::Standing)vrTogglePlayMode();
+    vrRequestRoomCalibration();
+    printlog("[VR GA26] positional tracking test %s; mode=%s",enabled?"ON":"OFF",vrPlayModeName());
+}
+} // namespace VrRoomScale
+// Windows game-only integration point; never invoked from a stereo eye draw.
+namespace VrPotionDrink { static void applyPending(); }
+void vrApplyPendingRoomScaleMovement() { VrRoomScale::applyPending(); VrPotionDrink::applyPending(); }
+static view_t vrRoomCamera(const view_t& base) {
+    view_t result=base;
+    if(!g_vrRoomScaleActive || !g_vrRoomScaleEnabled || g_xrPlayMode!=VrPlayMode::Standing ||
+        !VrRoomScale::supported() || !VrRoomScale::state.calibrated)return result;
+    const auto& state=VrRoomScale::state;
+    const float headY=(g_xrViews[0].pose.position.y+g_xrViews[1].pose.position.y)*.5f;
+    // Ignore native head-bob/sneak eye animation here, so tracked crouching
+    // is not applied twice. Native sneak gameplay remains intact. Preserve
+    // actual body Z changes (stairs, jumps/levitation) in the shared view.
+    const float lower=std::max(-1.05f,std::min(.35f,headY-state.baselineY));
+    result.x=players[clientnum]->entity->x/16.0;
+    result.y=players[clientnum]->entity->y/16.0;
+    result.z=state.baselineCameraZ+2.0*(players[clientnum]->entity->z-state.baselinePlayerZ)-
+        2.0*VR_TRACKING_UNITS_PER_METER*lower;
+    return result;
+}
+static const view_t* vrRoomBaseCamera(const view_t* incoming,view_t& storage) {
+    // Eye cameras already contain the shared transform. Adjust native-base
+    // pointers only, so reticle and bow helpers never apply height twice.
+    if(incoming && clientnum>=0 && clientnum<MAXPLAYERS && incoming==&cameras[clientnum]) {
+        storage=vrRoomCamera(*incoming);return &storage;
+    }
+    return incoming;
+}
+
 // GA12: One page list drives both navigation and the visible page indicator.
 enum class VrCalibrationPage { Arm, Item, Aim, Spell, Wrist, Status, Belt, Xp, Party, Skill, Flail, Bow };
 static std::vector<VrCalibrationPage> vrCalibrationPages()
@@ -2236,6 +2423,8 @@ static void vrCalibrationStepPage(bool backwards)
         next == VrCalibrationPage::Skill ? 5 : -1;
 }
 
+#include "vr_calibration_menu.hpp" // GA23 native calibration tabs development test.
+
 static void vrUpdateVisualArmCalibration(XrTime predictedDisplayTime)
 {
     vrLoadVisualArmCalibration();
@@ -2276,7 +2465,8 @@ static void vrUpdateVisualArmCalibration(XrTime predictedDisplayTime)
     const bool bothGrips = left.squeeze >= 0.72f && right.squeeze >= 0.72f;
     if (left.squeeze < 0.48f && right.squeeze < 0.48f)
         g_vrMeleeExitGripsSuppressed = false;
-    if (!g_vrArmCalibrationActive || !bothGrips || g_vrBodyCalibrationPage || g_vrArmCalibrationEditBow)
+    if (!g_vrArmCalibrationActive || !bothGrips || g_vrBodyCalibrationPage ||
+        g_vrArmCalibrationEditBow || VrCalibrationMenu::visible())
     {
         g_vrMeleeGripChordStartedAt = 0;
         g_vrMeleeGripChordLatched = false;
@@ -2355,8 +2545,10 @@ static void vrUpdateVisualArmCalibration(XrTime predictedDisplayTime)
             g_vrArmCalibrationRightClickPrevious = right.thumbstickClick;
             if (g_vrArmCalibrationActive)
             {
+                VrCalibrationMenu::open();
+                printlog("[VR GA23] native calibration tabs opened; labeled sliders and cached text");
                 messagePlayer(clientnum, MESSAGE_HINT,
-                    "VR CAL ON. Hold BOTH grips 3s for MELEE calibration.");
+                    "VR CAL ON. Point with right hand; trigger selects. Training editor: Controls & Help.");
                 vrShowVisualArmStatus(true);
                 vrShowVisualArmStatus(false);
             }
@@ -2391,6 +2583,24 @@ static void vrUpdateVisualArmCalibration(XrTime predictedDisplayTime)
         g_vrArmCalibrationBPrevious = bPressed;
         g_vrArmCalibrationRightClickPrevious = right.thumbstickClick;
         g_vrArmCalibrationLastSample = now;
+        return;
+    }
+    // Native Body menu owns its private ray/trigger while visible. Keep
+    // legacy reset/navigation gestures out of a held slider drag.
+    if (VrCalibrationMenu::visible())
+    {
+        VrCalibrationMenu::input(predictedDisplayTime);
+        g_vrArmCalibrationAPrevious = aPressed;
+        g_vrArmCalibrationBPrevious = bPressed;
+        g_vrArmCalibrationLeftClickPrevious = left.thumbstickClick;
+        g_vrArmCalibrationRightClickPrevious = right.thumbstickClick;
+        g_vrArmCalibrationLastSample = now;
+        g_vrArmCalibrationResetStart = 0;
+        if (g_vrArmCalibrationDirty && now - g_vrArmCalibrationLastSave >= 2500u)
+            vrSaveVisualArmCalibration();
+        if (g_vrFlailSettingsDirty) vrSaveModeSettings();
+        if (g_vrMeleeTuningDirty && now - g_vrMeleeLastSave >= 2500u)
+            vrSaveMeleeTuning();
         return;
     }
     // STEP638FZ8: Hold A+B for 0.7s while editing to toggle BODY FIT.
@@ -2796,6 +3006,11 @@ static void vrUpdateVisualArmCalibration(XrTime predictedDisplayTime)
 
 // Both controller positions and the VIEW/head space are located in the same
 // LOCAL space. The shoulder region turns with the player's headset yaw.
+static bool vrWorldGrabOwnsGrip(int hand);
+static void vrUpdateWorldGrabs();
+static bool g_vrDrinkOwnsRightGrip=false;
+namespace VrPotionDrink { static void sample(); }
+
 static void vrUpdateVRShortcutGestures(XrTime predictedDisplayTime)
 {
     const VrControllerHandState& left = g_xrControllerHands[0];
@@ -2880,7 +3095,8 @@ static void vrUpdateVRShortcutGestures(XrTime predictedDisplayTime)
     const bool dungeonMenuOpen = inDungeon && vrMenuPointerMode();
     const bool bowOwnsGrip = vrPhysicalBowOwnsAttack(clientnum) &&
         (g_vrBowPreview.drawing || g_vrBowRelease.pending);
-    const bool backpackAllowed = inDungeon && !dungeonPlayer->usingCommand() && !bowOwnsGrip;
+    const bool backpackAllowed = inDungeon && !dungeonPlayer->usingCommand() &&
+        !bowOwnsGrip && !vrWorldGrabOwnsGrip(1);
 
     // Keep the SAME shoulder volume for opening and closing.  Suppress the
     // normal grip/right-click while inside that volume.
@@ -3321,6 +3537,40 @@ bool vrSuppressGripQuickTurn(int playerIndex)
     return bound && SDL_JoystickInstanceID(bound)==SDL_JoystickInstanceID(g_xrVirtualSDLJoystick);
 }
 
+// GA29: rotate native movement FORCE directions, not raw stick axes. This
+// retains Barony's forward/strafe/backpedal speeds and ordinary collision.
+// Physical XR steps stay room-relative in the unchanged GA26 queue path.
+bool vrGetRoomStickMovementYaw(int playerIndex,real_t* outYaw) {
+    if(!outYaw || playerIndex!=clientnum || !g_vrRoomScaleEnabled || !g_vrRoomScaleActive ||
+        g_xrPlayMode!=VrPlayMode::Standing || !VrRoomScale::supported() ||
+        !VrRoomScale::movementAllowed() || !g_xrEyeViewsValid || !g_xrSessionRunning ||
+        g_xrSessionState!=XR_SESSION_STATE_FOCUSED || !g_xrControllerActionsAttached ||
+        !g_xrVirtualSDLJoystick || !inputs.hasController(playerIndex))return false;
+    auto* controller=inputs.getController(playerIndex);
+    SDL_GameController* device=controller?controller->getControllerDevice():nullptr;
+    SDL_Joystick* joystick=device?SDL_GameControllerGetJoystick(device):nullptr;
+    if(!joystick || SDL_JoystickInstanceID(joystick)!=SDL_JoystickInstanceID(g_xrVirtualSDLJoystick))return false;
+    const auto& right=g_xrControllerHands[1];
+    if(right.thumbrestAvailable && right.thumbrestTouch)return false; // native D-pad routing owns the stick
+    const auto& q=g_xrViews[0].pose.orientation;
+    const float fx=-2.f*(q.x*q.z+q.y*q.w);
+    const float fz=-1.f+2.f*(q.x*q.x+q.y*q.y);
+    static Uint32 owner=0;
+    static bool haveHeading=false;
+    static float headYaw=0.f;
+    if(owner!=players[playerIndex]->entity->getUID()) {
+        owner=players[playerIndex]->entity->getUID();haveHeading=false;
+    }
+    if(std::isfinite(fx) && std::isfinite(fz) && fx*fx+fz*fz>=.0625f) {
+        headYaw=std::atan2(-fx,-fz);haveHeading=std::isfinite(headYaw);
+    }
+    // Looking almost vertically has no unique horizontal heading. Keep the
+    // last valid one instead of snapping movement back to the room origin.
+    if(!haveHeading)return false;
+    *outYaw=players[playerIndex]->entity->yaw-static_cast<real_t>(headYaw);
+    return std::isfinite(*outYaw);
+}
+
 // Four cardinal D-pad directions with separate engage/release thresholds.
 // 0 neutral, 1 up, 2 right, 3 down, 4 left. No synthetic key repeats:
 // Barony receives held SDL buttons and owns action/repeat behavior.
@@ -3597,7 +3847,7 @@ static void vrUpdateVirtualSDLGamepad(bool inputsValid = true)
         (bowHotbarSelection ? left.squeeze >= .5f :
             (physicalBowControls ? bowSpellPressed :
              (bowControls ? (bowInputArmed ? bowDrawControl.squeeze : 0.f) : left.squeeze) >= .5f)) &&
-        !g_vrMeleeExitGripsSuppressed &&
+        !g_vrMeleeExitGripsSuppressed && !vrWorldGrabOwnsGrip(0) &&
         !(bowControls && g_vrBowDrawHand == 1 &&
           (g_xrVrBackpackInZone || g_xrVrBackpackGripConsumed)));
     // Restore the native RB actions except while the right grip is owned by
@@ -3605,7 +3855,7 @@ static void vrUpdateVirtualSDLGamepad(bool inputsValid = true)
     const bool bowOwnsRightGrip=vrPhysicalBowOwnsAttack(clientnum) &&
         g_vrBowDrawHand==1 && (g_vrBowPreview.drawing || g_vrBowRelease.pending);
     setButton(g_xrVirtualSDLJoystick, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER,
-        right.squeeze >= 0.5f && !bowOwnsRightGrip && !vrMenuPointerMode() &&
+        right.squeeze >= 0.5f && !bowOwnsRightGrip && !vrWorldGrabOwnsGrip(1) && !g_vrDrinkOwnsRightGrip && !vrMenuPointerMode() &&
         !g_vrMeleeExitGripsSuppressed &&
         !g_xrVrBackpackInZone && !g_xrVrBackpackGripConsumed);
     // STEP638GA3: Push the RIGHT analog stick DOWN for vanilla Quick Turn.
@@ -5233,8 +5483,9 @@ static void vrUpdateControllerInputs(XrTime predictedDisplayTime)
         vrUpdateGuiLaserPointer(predictedDisplayTime);
     }
 
-    // Pass analog controls and buttons to the SDL virtual gamepad.
-    vrUpdateVirtualSDLGamepad();
+    // GA24: vrBeginFrame forwards the gamepad once, after eye poses and
+    // world-grab ownership are resolved. Sending a preliminary grip press
+    // here could queue a native action before a successful grab consumes it.
 
     // Periodic OpenXR diagnostic snapshot, in addition to live SDL input.
     static unsigned inputFrames = 0;
@@ -5318,10 +5569,16 @@ void vrProcessOpenXRFrame(view_t* camera)
     vrUpdateControllerInputs(frameState.predictedDisplayTime);
     // Retrieve headset tracking for both eyes at the predicted display time.
     vrLocateEyeViews(frameState.predictedDisplayTime);
+    VrRoomScale::update(frameState.predictedDisplayTime);
+    vrUpdateWorldGrabs(); // GA24: same-frame head/hands, before melee and final SDL forwarding.
+    VrPotionDrink::sample(); // Queue only; native item consumption occurs before render traversal.
     // STEP 629: Both controller and headset poses now share this frame time.
     vrProcessPhysicalMelee(frameState.predictedDisplayTime);
     vrUpdateCustomCrosshairAim(frameState.predictedDisplayTime);
     vrSampleHeadsetForLocomotion(frameState.predictedDisplayTime);
+    // GA25 physical movement already passed native collision at exact tracked
+    // displacement. Do not send the old approximate walking stick as well.
+    if(g_vrRoomScaleActive)g_xrRoomStickX=g_xrRoomStickY=0.f;
     // Send the room-scale movement sample through the SAME SDL input bridge.
     vrUpdateVirtualSDLGamepad();
     // Extract horizontal headset rotation from the tracked eye orientation.
@@ -5377,6 +5634,7 @@ void vrProcessOpenXRFrame(view_t* camera)
 static void vrDrawEquipmentCalibrationHelp()
 {
     if (!g_vrArmCalibrationActive || !g_xrGuiFramebuffer) return;
+    if (VrCalibrationMenu::draw()) return;
     TTF_Font* font = ttf16 ? ttf16 : (ttf12 ? ttf12 : ttf8);
     if (!font) return;
 
@@ -6979,7 +7237,7 @@ void vrLocateEyeViews(XrTime predictedDisplayTime)
 // STEP 593: Hand and equipment are DIFFERENT voxel meshes; they should not
 // share a single forced scale. Tune these visual-only values after headset test.
 // Preserve first-person item's own base size (often 0.5 or 1.0).
-static constexpr float VR_HAND_UNITS_PER_METER = 8.0f;
+static constexpr float VR_HAND_UNITS_PER_METER = VR_TRACKING_UNITS_PER_METER;
 static constexpr float VR_HAND_VOXEL_SCALE = 0.19f; // Step 592 was 0.30: too large relative to equipment.
 static constexpr float VR_ITEM_VOXEL_SCALE = 0.66f;
 static constexpr float VR_SHIELD_VOXEL_SCALE = 0.65f;
@@ -7237,6 +7495,8 @@ static bool vrBuildControllerWorldAim(const view_t* gameCamera,
     VrWorldAimRay& out, bool requireRangedWeapon = true,
     bool applyRangedCalibration = true, bool leftHandSpellAim = false)
 {
+    view_t roomStorage{};
+    gameCamera=vrRoomBaseCamera(gameCamera,roomStorage);
     if (!leftHandSpellAim && vrBowDisplaySelected())
         return vrBuildCalibratedBowAim(gameCamera, out);
     const int aimHand = leftHandSpellAim ? vrSpellControllerHand() : 1;
@@ -7355,6 +7615,378 @@ static bool vrBuildControllerWorldAim(const view_t* gameCamera,
     // only reticle offset that would make shots miss their displayed guide.
     out.origin.y -= 0.35f;
     return true;
+}
+
+static VrGripVector3 vrGripApplyBasis(const VrGripBasis3& b, VrGripVector3 v);
+
+// GA24 pilot: offline loose-item holding. The world entity remains the same
+// entity and stack: no inventory insertion, clone, consume, damage or throw.
+namespace VrWorldGrab {
+// GA27: a small contact allowance around the calibrated hand pivot.
+// The GA26 test reached 27.6 cm with clear sight; 22 cm rejected it.
+static constexpr float reachMeters=.30f;
+struct Held {
+    Uint32 uid=0,owner=0,heartbeat=0;
+    int level=-1,type=-1,appearance=0,count=0;
+    bool secret=false;
+    list_t* world=nullptr;
+    VrGripVector3 offset{};
+    float yaw=0,pitch=0,roll=0;
+};
+static Held held[2];
+static bool armed[2]{},consumed[2]{};
+static Entity* entity(int hand) {
+    const auto& h=held[hand];
+    if(!h.uid || h.world!=map.entities || h.level!=currentlevel || h.secret!=secretlevel)return nullptr;
+    Entity* e=uidToEntity(h.uid);
+    return e && e->behavior==&actItem && e->skill[10]==h.type &&
+        e->skill[13]==h.count && e->skill[14]==h.appearance ? e:nullptr;
+}
+static void release(int hand,const char* reason) {
+    auto& h=held[hand];if(!h.uid)return;
+    if(Entity* e=entity(hand)) {
+        e->vel_x=e->vel_y=e->vel_z=0;
+        e->itemNotMoving=0;e->itemNotMovingClient=0;e->itemWaterBob=0;
+        e->flags[UPDATENEEDED]=true;
+        TileEntityList.updateEntity(*e);
+    }
+    printlog("[VR GA24] world item released hand=%d uid=%u reason=%s; no inventory/throw",hand,h.uid,reason);
+    h=Held{};armed[hand]=false;
+}
+static bool available() {
+    return multiplayer==SINGLE && !splitscreen && g_xrSessionRunning &&
+        g_xrSessionState==XR_SESSION_STATE_FOCUSED && g_xrEyeViewsValid &&
+        !intro && !gamePaused && !g_vrArmCalibrationActive &&
+        clientnum>=0 && clientnum<MAXPLAYERS && players[clientnum] &&
+        players[clientnum]->entity && stats[clientnum] && players[clientnum]->shootmode &&
+        !players[clientnum]->usingCommand() && players[clientnum]->bControlEnabled &&
+        stats[clientnum]->HP>0 && !vrMenuPointerMode() &&
+        !vrBowEquipped() && !vrBowHotbarSelecting() &&
+        !players[clientnum]->ghost.isActive() &&
+        players[clientnum]->entity->effectShapeshift==NOTHING &&
+        !stats[clientnum]->getEffectActive(EFF_SHAPESHIFT) &&
+        !stats[clientnum]->getEffectActive(EFF_PROJECT_SPIRIT) &&
+        !cast_animation[clientnum].active && !cast_animation[clientnum].active_spellbook &&
+        !cast_animation[clientnum].spellWaitingAttackInput() &&
+        !g_xrControllerHands[0].primaryButton && !g_xrControllerHands[0].secondaryButton &&
+        !g_xrControllerHands[1].primaryButton && !g_xrControllerHands[1].secondaryButton;
+}
+static float dot(const VrGripVector3& a,const VrGripVector3& b) {
+    return a.x*b.x+a.y*b.y+a.z*b.z;
+}
+static bool handPose(int hand,VrGripVector3& point,VrGripBasis3& basis,float& yaw,float& pitch,float& roll) {
+    const auto& pose=g_xrControllerHands[hand].gripPose;
+    const view_t camera=vrRoomCamera(cameras[clientnum]);
+    const XrVector3f head{
+        (g_xrViews[0].pose.position.x+g_xrViews[1].pose.position.x)*.5f,
+        (g_xrViews[0].pose.position.y+g_xrViews[1].pose.position.y)*.5f,
+        (g_xrViews[0].pose.position.z+g_xrViews[1].pose.position.z)*.5f};
+    const float right=pose.position.x-head.x,forward=head.z-pose.position.z,up=pose.position.y-head.y;
+    const float c=cosf(camera.ang),s=sinf(camera.ang);
+    point={static_cast<float>(camera.x)*16.f+VR_HAND_UNITS_PER_METER*(forward*c-right*s),
+        -(static_cast<float>(camera.z)-1.f)*.5f+VR_HAND_UNITS_PER_METER*up,
+        static_cast<float>(camera.y)*16.f+VR_HAND_UNITS_PER_METER*(forward*s+right*c)};
+    basis=vrGripXRControllerBasis(pose.orientation,camera.ang);
+    const auto& a=g_vrArmVisual[hand];
+    const float bodyUp=g_vrBodyFit.enabled?VR_HAND_UNITS_PER_METER*g_vrBodyFit.handOffsetMeters[hand]:0.f;
+    const auto offset=vrGripApplyBasis(basis,{a.forward,a.up+bodyUp,a.side});
+    point.x+=offset.x;point.y+=offset.y;point.z+=offset.z;
+    yaw=atan2f(basis.forward.z,basis.forward.x);
+    const float horizontal=sqrtf(basis.forward.x*basis.forward.x+basis.forward.z*basis.forward.z);
+    pitch=-atan2f(basis.forward.y,horizontal);
+    const float side=-sinf(yaw)*basis.up.x+cosf(yaw)*basis.up.z;
+    const float upright=basis.up.y*horizontal+
+        (basis.up.x*cosf(yaw)+basis.up.z*sinf(yaw))*(-basis.forward.y);
+    roll=atan2f(side,upright);
+    const Entity* p=players[clientnum]->entity;
+    const float dx=point.x-p->x,dy=point.z-p->y;
+    return std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z) &&
+        std::isfinite(yaw) && std::isfinite(pitch) && std::isfinite(roll) && dx*dx+dy*dy<=144.f;
+}
+static bool reachable(Entity* e) {
+    Entity* p=players[clientnum]->entity;
+    const double dx=e->x-p->x,dy=e->y-p->y,range=sqrt(dx*dx+dy*dy);
+    if(range<.05)return true;
+    const hit_t saved=hit;
+    // PASSABLE pickups are omitted by native traces. Test blockers before
+    // the item's location rather than requiring a hit on the pickup itself.
+    const double traced=lineTrace(p,p->x,p->y,atan2(dy,dx),range,0,false);
+    const bool clear=traced>=range-.05;hit=saved;
+    return clear;
+}
+static bool candidate(Entity* e) {
+    if(!e || e->behavior!=&actItem || e->flags[INVISIBLE] || e->skill[10]<0 ||
+        e->skill[10]>=NUMITEMS || e->skill[13]<=0 || !e->itemNotMoving ||
+        e->itemSokobanReward || e->itemContainer || e->itemFollowUID || e->itemReturnUID ||
+        e->itemAutoSalvageByPlayer || fabs(e->vel_x)>.05 || fabs(e->vel_y)>.05 || fabs(e->vel_z)>.05)
+        return false;
+    const int type=e->skill[10];
+    return type!=ARTIFACT_ORB_RED && type!=ARTIFACT_ORB_GREEN &&
+        type!=ARTIFACT_ORB_BLUE && type!=ARTIFACT_ORB_PURPLE &&
+        type!=TOOL_PLAYER_LOOT_BAG && type!=TOOL_DUCK &&
+        e->getUID()!=held[0].uid && e->getUID()!=held[1].uid;
+}
+static bool move(Entity* e,const VrGripVector3& next) {
+    const double dx=next.x-e->x,dy=next.z-e->y,dz=-next.y-e->z;
+    const double distance=sqrt(dx*dx+dy*dy+dz*dz);
+    if(distance>6.0)return false; // tracking/teleport jump: drop at last safe pose
+    const hit_t saved=hit;
+    bool clear=true;
+    const double horizontal=sqrt(dx*dx+dy*dy);
+    if(horizontal>.01) {
+        const double traced=lineTrace(e,e->x,e->y,atan2(dy,dx),horizontal,LINETRACE_IGNORE_ENTITIES,false);
+        clear=traced>=horizontal-.05;
+    }
+    const int steps=std::max(1,static_cast<int>(ceil(horizontal/.5)));
+    for(int i=1;clear && i<=steps;++i) {
+        const double fraction=static_cast<double>(i)/steps;
+        clear=!checkObstacle(e->x+dx*fraction,e->y+dy*fraction,e,players[clientnum]->entity);
+    }
+    hit=saved;
+    if(!clear)return false;
+    e->x=next.x;e->y=next.z;e->z=-next.y;
+    e->vel_x=e->vel_y=e->vel_z=0;e->itemWaterBob=0;
+    e->new_x=e->x;e->new_y=e->y;e->new_z=e->z;
+    TileEntityList.updateEntity(*e);
+    return true;
+}
+// Diagnostic-only context labels mirror available(); they do not relax it.
+static const char* contextReason() {
+    if(multiplayer!=SINGLE)return "not-single-player";
+    if(splitscreen)return "split-screen";
+    if(!g_xrSessionRunning)return "session-not-running";
+    if(g_xrSessionState!=XR_SESSION_STATE_FOCUSED)return "headset-not-focused";
+    if(!g_xrEyeViewsValid)return "eye-poses-unavailable";
+    if(intro)return "intro-or-main-menu";
+    if(gamePaused)return "paused";
+    if(g_vrArmCalibrationActive)return "calibration-open";
+    if(clientnum<0 || clientnum>=MAXPLAYERS || !players[clientnum])return "no-local-player";
+    if(!players[clientnum]->entity || !stats[clientnum])return "no-player-entity-or-stats";
+    if(!players[clientnum]->shootmode)return "inventory-or-ui-mode";
+    if(players[clientnum]->usingCommand())return "command-input";
+    if(!players[clientnum]->bControlEnabled)return "player-controls-disabled";
+    if(stats[clientnum]->HP<=0)return "player-dead";
+    if(vrMenuPointerMode())return "native-ui-open";
+    if(vrBowEquipped())return "bow-equipped";
+    if(vrBowHotbarSelecting())return "hotbar-selection";
+    if(players[clientnum]->ghost.isActive())return "ghost";
+    if(players[clientnum]->entity->effectShapeshift!=NOTHING || stats[clientnum]->getEffectActive(EFF_SHAPESHIFT))return "shapeshift";
+    if(stats[clientnum]->getEffectActive(EFF_PROJECT_SPIRIT))return "projected-spirit";
+    if(cast_animation[clientnum].active || cast_animation[clientnum].active_spellbook ||
+        cast_animation[clientnum].spellWaitingAttackInput())return "casting-or-waiting-for-spell";
+    if(g_xrControllerHands[0].primaryButton || g_xrControllerHands[0].secondaryButton ||
+        g_xrControllerHands[1].primaryButton || g_xrControllerHands[1].secondaryButton)return "face-button-held";
+    return "available";
+}
+static void report(int hand,bool context,bool empty,bool valid,bool poseValid,const VrGripVector3& point,Uint32 now) {
+    static Uint32 previous[2]{};
+    if(g_xrControllerHands[hand].squeeze<.5f || (previous[hand] && now-previous[hand]<1500u))return;
+    previous[hand]=now;
+    const char* reason=!context?contextReason():!empty?"chosen-hand-equipped":!valid?
+        "tracking-or-backpack-ownership":!poseValid?"invalid-or-distant-hand-anchor":held[hand].uid?"holding":!armed[hand]?"release-grip-once":"searching";
+    printlog("[VR GA24R2] grab check hand=%d reason=%s grip=%.2f armed=%d tracking=%d owned=%u slot_occupied=%d backpack=%d/%d",
+        hand,reason,static_cast<double>(g_xrControllerHands[hand].squeeze),armed[hand]?1:0,
+        g_xrControllerHands[hand].gripPoseValid?1:0,held[hand].uid,empty?0:1,
+        g_xrVrBackpackInZone?1:0,g_xrVrBackpackGripConsumed?1:0);
+    if(!poseValid || !map.entities)return;
+    printlog("[VR GA24R2] room tracking hand=%d mode=%s headY=%.3fm baselineY=%.3fm handY=%.3fm cameraZ=%.3f sneak=%d roomStick=(%.2f %.2f)",
+        hand,vrPlayModeName(),static_cast<double>((g_xrViews[0].pose.position.y+g_xrViews[1].pose.position.y)*.5f),
+        static_cast<double>(g_xrRoomCalibratedHeight),static_cast<double>(g_xrControllerHands[hand].gripPose.position.y),
+        static_cast<double>(cameras[clientnum].z),g_xrPhysicalSneaking?1:0,
+        static_cast<double>(g_xrRoomStickX),static_cast<double>(g_xrRoomStickY));
+    Entity* nearest=nullptr;float distance=1.e20f;int total=0,eligible=0;
+    for(node_t* node=map.entities->first;node;node=node->next) {
+        auto* e=static_cast<Entity*>(node->element);if(!e || e->behavior!=&actItem)continue;
+        ++total;if(candidate(e))++eligible;
+        const float dx=e->x-point.x,dy=-e->z-point.y,dz=e->y-point.z,d=dx*dx+dy*dy+dz*dz;
+        if(d<distance){distance=d;nearest=e;}
+    }
+    printlog("[VR GA24R2] hand anchor hand=%d world=(%.2f %.2f %.2f) loose=%d eligible=%d radius=0.300m",
+        hand,static_cast<double>(point.x),static_cast<double>(point.z),static_cast<double>(-point.y),total,eligible);
+    if(nearest)printlog("[VR GA24R2] nearest hand=%d uid=%u type=%d count=%d distance=%.3fm eligible=%d los=%d idle=%d vel=(%.3f %.3f %.3f) invisible=%d quest=%d container=%d follow=%d return=%d salvage=%d world=(%.2f %.2f %.2f)",
+        hand,nearest->getUID(),nearest->skill[10],nearest->skill[13],static_cast<double>(sqrtf(distance)/VR_HAND_UNITS_PER_METER),
+        candidate(nearest)?1:0,reachable(nearest)?1:0,nearest->itemNotMoving,
+        static_cast<double>(nearest->vel_x),static_cast<double>(nearest->vel_y),static_cast<double>(nearest->vel_z),
+        nearest->flags[INVISIBLE]?1:0,nearest->itemSokobanReward,nearest->itemContainer,nearest->itemFollowUID,
+        nearest->itemReturnUID,nearest->itemAutoSalvageByPlayer,static_cast<double>(nearest->x),static_cast<double>(nearest->y),static_cast<double>(nearest->z));
+}
+} // namespace VrWorldGrab
+static bool vrWorldGrabOwnsGrip(int hand) {
+    return hand>=0 && hand<2 && (VrWorldGrab::held[hand].uid || VrWorldGrab::consumed[hand]);
+}
+static void vrUpdateWorldGrabs() {
+    using namespace VrWorldGrab;
+    static bool announced=false;
+    if(!announced){printlog("[VR GA24R2] world grab update running; diagnostic build, unchanged grab rules");announced=true;}
+    const Uint32 now=SDL_GetTicks();const bool context=available();
+    for(int hand=0;hand<2;++hand) {
+        if(g_xrControllerHands[hand].squeeze<.35f)consumed[hand]=false;
+        const bool empty=context && (hand==0?!stats[clientnum]->shield:!stats[clientnum]->weapon);
+        const bool valid=empty && g_xrControllerHands[hand].gripPoseValid &&
+            !(hand==1 && (g_xrVrBackpackInZone || g_xrVrBackpackGripConsumed));
+        VrGripVector3 point{};VrGripBasis3 basis{};float yaw=0,pitch=0,roll=0;
+        const bool poseValid=valid && handPose(hand,point,basis,yaw,pitch,roll);
+        report(hand,context,empty,valid,poseValid,point,now);
+        if(!poseValid) {
+            release(hand,"context, occupied hand, or tracking");armed[hand]=false;continue;
+        }
+        auto& h=held[hand];
+        const float grip=g_xrControllerHands[hand].squeeze;
+        if(grip<.35f){release(hand,"grip released");armed[hand]=true;continue;}
+        if(h.uid) {
+            Entity* e=entity(hand);
+            if(!e || h.owner!=players[clientnum]->entity->getUID() || now-h.heartbeat>150u) {
+                release(hand,"entity or timing changed");continue;
+            }
+            const auto offset=vrGripApplyBasis(basis,h.offset);
+            VrGripVector3 next{point.x+offset.x,point.y+offset.y,point.z+offset.z};
+            if(!move(e,next)){release(hand,"blocked movement or tracking jump");continue;}
+            e->yaw=yaw+h.yaw;e->pitch=pitch+h.pitch;e->roll=roll+h.roll;
+            h.heartbeat=now;continue;
+        }
+        if(!armed[hand] || grip<.72f || !map.entities)continue;
+        Entity* nearest=nullptr;float closest=reachMeters*reachMeters*VR_HAND_UNITS_PER_METER*VR_HAND_UNITS_PER_METER;
+        for(node_t* node=map.entities->first;node;node=node->next) {
+            auto* e=static_cast<Entity*>(node->element);if(!candidate(e))continue;
+            const float dx=e->x-point.x,dy=-e->z-point.y,dz=e->y-point.z;
+            const float d=dx*dx+dy*dy+dz*dz;
+            if(d<closest && reachable(e)){nearest=e;closest=d;}
+        }
+        if(!nearest)continue;
+        h.uid=nearest->getUID();h.owner=players[clientnum]->entity->getUID();h.heartbeat=now;
+        h.level=currentlevel;h.secret=secretlevel;h.world=map.entities;
+        h.type=nearest->skill[10];h.count=nearest->skill[13];h.appearance=nearest->skill[14];
+        const VrGripVector3 difference{static_cast<float>(nearest->x)-point.x,
+            -static_cast<float>(nearest->z)-point.y,static_cast<float>(nearest->y)-point.z};
+        h.offset={dot(difference,basis.forward),dot(difference,basis.up),dot(difference,basis.right)};
+        h.yaw=nearest->yaw-yaw;h.pitch=nearest->pitch-pitch;h.roll=nearest->roll-roll;
+        // Persist a normal non-idle item state, so a save loaded without
+        // this transient VR hold resumes native gravity instead of hovering.
+        nearest->itemNotMoving=0;nearest->itemNotMovingClient=0;
+        nearest->vel_x=nearest->vel_y=nearest->vel_z=0;
+        nearest->flags[UPDATENEEDED]=true;
+        consumed[hand]=true;
+        printlog("[VR GA24] world item grabbed hand=%d uid=%u type=%d count=%d",hand,h.uid,h.type,h.count);
+    }
+}
+// GA33: deliberate, controller-based drinking pilot. Distances are raw XR metres,
+// shared by head and grip; neither world scale nor room/seated camera offsets enter.
+namespace VrPotionDrink {
+struct Gesture {
+    Uint32 uid=0,owner=0,last=0,queuedAt=0;
+    int type=-1,count=0,level=-1;bool secret=false;
+    bool armed=false,latched=false,pending=false;
+    void reset(){*this=Gesture{};}
+    bool sample(Uint32 now,Uint32 item,Uint32 actor,int itemType,int itemCount,
+        int mapLevel,bool mapSecret,float distance,float grip,float trigger) {
+        if(uid!=item || owner!=actor || type!=itemType || level!=mapLevel || secret!=mapSecret) {
+            reset();uid=item;owner=actor;type=itemType;level=mapLevel;secret=mapSecret;
+        }
+        if(last && now-last>150u){armed=false;pending=false;}
+        last=now;
+        if(!std::isfinite(distance)||!std::isfinite(grip)||!std::isfinite(trigger)) {
+            reset();return false;
+        }
+        if(pending && now-queuedAt>150u)pending=false;
+        // Observe a released grip even at the face. A grip already held while
+        // approaching cannot drink; the press itself must occur in the zone.
+        if(grip<.35f){armed=true;latched=false;return false;}
+        if(grip<.65f || !armed)return false;
+        armed=false;latched=true; // consume every press, including out of range
+        if(distance>.25f || trigger>=.15f || pending)return false;
+        pending=true;queuedAt=now;count=itemCount;
+        return true;
+    }
+};
+static Gesture state;
+static bool context() {
+    return VrWorldGrab::available() && g_xrControllerActionsAttached &&
+        g_xrControllerHands[1].gripPoseValid && !vrWorldGrabOwnsGrip(1) &&
+        !g_xrVrBackpackInZone && !g_xrVrBackpackGripConsumed &&
+        players[clientnum]->entity->isMobile();
+}
+static Item* bottle() {
+    if(!context())return nullptr;
+    Item* item=stats[clientnum]->weapon;
+    return item && itemCategory(item)==POTION && item->type!=POTION_EMPTY &&
+        item->status!=BROKEN && item->count>0 ? item : nullptr;
+}
+static bool posture(float& distance) {
+    const auto& q=g_xrViews[0].pose.orientation;
+    const auto mouthOffset=vrGripRotateXR(q,{0.f,-.10f,-.08f});
+    const auto& left=g_xrViews[0].pose.position;
+    const auto& right=g_xrViews[1].pose.position;
+    const auto& grip=g_xrControllerHands[1].gripPose;
+    const float x=grip.position.x-(left.x+right.x)*.5f-mouthOffset.x;
+    const float y=grip.position.y-(left.y+right.y)*.5f-mouthOffset.y;
+    const float z=grip.position.z-(left.z+right.z)*.5f-mouthOffset.z;
+    distance=std::sqrt(x*x+y*y+z*z);
+    return std::isfinite(distance);
+}
+static void sample() {
+    g_vrDrinkOwnsRightGrip=false;
+    Item* item=bottle();float distance=0;
+    if(!item || !posture(distance)) {
+        static Uint32 blockedReport=0;
+        const Uint32 now=SDL_GetTicks();
+        if(clientnum>=0 && clientnum<MAXPLAYERS && players[clientnum] && stats[clientnum] &&
+            stats[clientnum]->weapon && itemCategory(stats[clientnum]->weapon)==POTION &&
+            g_xrControllerHands[1].squeeze>=.65f && (!blockedReport || now-blockedReport>=1500u)) {
+            blockedReport=now;
+            printlog("[VR GA33] drink blocked: single=%d paused=%d calibration=%d shoot=%d tracking=%d backpack=%d/%d",
+                multiplayer==SINGLE?1:0,gamePaused?1:0,g_vrArmCalibrationActive?1:0,
+                players[clientnum]->shootmode?1:0,g_xrControllerHands[1].gripPoseValid?1:0,
+                g_xrVrBackpackInZone?1:0,g_xrVrBackpackGripConsumed?1:0);
+        }
+        state.reset();return;
+    }
+    const auto& hand=g_xrControllerHands[1];
+    const bool queued=state.sample(SDL_GetTicks(),item->uid,players[clientnum]->entity->getUID(),
+        static_cast<int>(item->type),item->count,currentlevel,secretlevel,
+        distance,hand.squeeze,hand.trigger);
+    // Reserve RB only near the mouth or until release after a drink. All other
+    // grip interactions retain their existing priority and forwarding rules.
+    g_vrDrinkOwnsRightGrip=hand.squeeze>=.35f &&
+        (distance<=.30f || state.latched);
+    static Uint32 reported=0;
+    const Uint32 now=SDL_GetTicks();
+    if(hand.squeeze>=.65f && (!reported || now-reported>=1500u)) {
+        reported=now;
+        printlog("[VR GA33] drink check distance=%.3fm grip=%.2f trigger=%.2f queued=%d; press GRIP at face",
+            static_cast<double>(distance),static_cast<double>(hand.squeeze),static_cast<double>(hand.trigger),queued?1:0);
+    }
+    if(queued)printlog("[VR GA33] drink queued item=%u type=%d distance=%.3fm",state.uid,state.type,static_cast<double>(distance));
+}
+static void applyPending() {
+    if(!state.pending)return;
+    state.pending=false; // consume the request before any native call
+    Item* item=bottle();float distance=0;
+    const auto& hand=g_xrControllerHands[1];
+    if(!item || SDL_GetTicks()-state.queuedAt>150u || SDL_GetTicks()-state.last>150u ||
+        item->uid!=state.uid || static_cast<int>(item->type)!=state.type || item->count!=state.count ||
+        players[clientnum]->entity->getUID()!=state.owner || currentlevel!=state.level || secretlevel!=state.secret ||
+        !posture(distance) || distance>.25f || hand.trigger>=.15f) {
+        printlog("[VR GA33] drink cancelled: item, pose, context or timing changed");return;
+    }
+    printlog("[VR GA33] native potion use requested item=%u type=%d count=%d",state.uid,state.type,state.count);
+    useItem(item,clientnum); // native effects, consumption, recipe and bottle recovery
+    // The native call can free item and clear stats.weapon. Never read item again.
+}
+} // namespace VrPotionDrink
+
+// Native actItem calls this before movement/pickup. Keep normal behavior for
+// every other entity and for every non-pilot context, including flat mode.
+bool vrTickHeldWorldItem(Entity* e) {
+    static bool announced=false;
+    if(!announced){printlog("[VR GA24R2] native world-item hook running");announced=true;}
+    for(int hand=0;hand<2;++hand)if(e && e->getUID()==VrWorldGrab::held[hand].uid) {
+        if(VrWorldGrab::entity(hand)!=e || !VrWorldGrab::available() ||
+            SDL_GetTicks()-VrWorldGrab::held[hand].heartbeat>150u) {
+            VrWorldGrab::release(hand,"native tick context or timeout");return false;
+        }
+        return true;
+    }
+    return false;
 }
 
 // Called ONLY from Barony's ranged-projectile creation hook. Non-VR and
@@ -7936,6 +8568,8 @@ static bool vrBowTrackingValid(bool requireDrawHand = true) {
 // same. The native attack still controls cooldown, damage, ammo and gravity.
 static bool vrBuildCalibratedBowAim(const view_t* camera, VrWorldAimRay& out)
 {
+    view_t roomStorage{};
+    camera=vrRoomBaseCamera(camera,roomStorage);
     if (!camera || !vrBowTrackingValid(false)) return false;
     auto origin = vrBowLocal({0,0,0});
     auto forward = vrBowSub(vrBowLocal({1,0,0}),origin);
@@ -7992,6 +8626,11 @@ static bool vrBowGameplayCanInteract()
 
 static void vrUpdateBowPreview()
 {
+    if (vrWorldGrabOwnsGrip(g_vrBowDrawHand))
+    {
+        vrCancelPhysicalBow("world grab grip must be released");
+        return;
+    }
     auto& s = g_vrBowPreview;
     const Uint32 now = SDL_GetTicks();
     const bool gameplay = vrPhysicalBowOwnsAttack(clientnum) && vrBowGameplayActive();
@@ -9154,8 +9793,63 @@ static void vrLogBeltHudGate(bool hasEye)
         hotbar ? static_cast<double>(hotbar->getOpacity()) : -1.0);
 }
 
+// GA28: a level, stereo-center headset-relative belt. Head pitch/roll do
+// not rotate the panel; saved manual orientation and scale remain separate.
+struct VrHeadsetBeltPose { double x,y,z;float yaw; };
+static VrHeadsetBeltPose vrHeadsetBeltPose(const view_t& head,float trackedYaw,
+    const VrWearableHudTransform& h) {
+    const float yaw=static_cast<float>(head.ang)-trackedYaw;
+    const float c=std::cos(yaw),s=std::sin(yaw);
+    const float forward=std::max(1.6f,3.4f+h.forward);
+    return {head.x*16.0+forward*c-h.side*s,
+            head.y*16.0+forward*s+h.side*c,
+            (head.z-1.0)*.5-(-7.5f+h.up),yaw+h.yaw};
+}
+// The native 2D coarse culler used desktop fov/aspect for VR. Enclose both
+// asymmetric eye frusta in a padded spherical cone. Its horizontal footprint
+// expands with pitch; near a pole, skip only this angular rejection. Native
+// wall occlusion, actual OpenXR projection and far clip remain unchanged.
+static float vrCalculateConservativeVisibilityHalfAngle(float nativePitch) {
+    constexpr float pi=3.14159265358979323846f;
+    if(!g_xrEyeViewsValid)return pi;
+    float horizontal=0.f,vertical=0.f;
+    for(const auto& eye:g_xrViews) {
+        const auto& f=eye.fov;
+        for(float angle:{f.angleLeft,f.angleRight,f.angleUp,f.angleDown})
+            if(!std::isfinite(angle) || std::fabs(angle)>=pi*.5f)return pi;
+        horizontal=std::max(horizontal,std::max(std::fabs(f.angleLeft),std::fabs(f.angleRight)));
+        vertical=std::max(vertical,std::max(std::fabs(f.angleUp),std::fabs(f.angleDown)));
+    }
+    if(horizontal<=0.f || vertical<=0.f)return pi;
+    const float th=std::tan(horizontal),tv=std::tan(vertical);
+    const float cone=std::atan(std::sqrt(th*th+tv*tv))+.174532925f; // 10 degree visibility margin
+    const float pitch=std::fabs(nativePitch-vrHeadPitch);
+    if(!std::isfinite(pitch) || cone>=pi*.5f || pitch+cone>=pi*.5f)return pi;
+    const float ratio=std::sin(cone)/std::cos(pitch);
+    // GA29: widen the existing conservative visibility angle by 10%.
+    return std::min(pi,1.10f*std::asin(std::max(0.f,std::min(1.f,ratio))));
+}
+
+// behindCamera() is called for many tiles/entities. Compute the trigonometric
+// bound once per XR display time / pitch, not once for every visibility test.
+float vrGetConservativeVisibilityHalfAngle(float nativePitch) {
+    if(g_vrVisibilityProbeFull)return 3.14159265358979323846f;
+    static bool haveBound=false,lastValid=false;
+    static XrTime lastTime=0;
+    static float lastPitch=0.f,bound=0.f;
+    const float pitch=nativePitch-vrHeadPitch;
+    if(!haveBound || lastTime!=g_xrPendingDisplayTime || lastPitch!=pitch ||
+        lastValid!=g_xrEyeViewsValid) {
+        bound=vrCalculateConservativeVisibilityHalfAngle(nativePitch);
+        haveBound=true;lastTime=g_xrPendingDisplayTime;lastPitch=pitch;
+        lastValid=g_xrEyeViewsValid;
+    }
+    return bound;
+}
+
 static void vrDrawSpatialHud(view_t* eyeCamera)
 {
+    if(g_vrSpatialHudProbeHidden)return; // Temporary HUD-source isolation; wrist/menu paths stay intact.
     vrLogBeltHudGate(eyeCamera != nullptr);
     if (!eyeCamera || intro || gamePaused ||
         clientnum < 0 || clientnum >= MAXPLAYERS ||
@@ -9257,27 +9951,13 @@ static void vrDrawSpatialHud(view_t* eyeCamera)
         marker->yaw = yaw + h.yaw;
         marker->pitch = h.pitch;
         marker->roll = h.roll;
-        // STEP638FK: Keep the exact Step638FI body-root belt attachment
-        // with legacy tracked VR arms and no rendered player body.
-        // STEP638FI: the belt follows the real player root yaw and torso,
-        // NOT where the player turns their head. This is simulated hips,
-        // not actual waist tracking, but brings the belt within arm's reach.
-        if (index == 0)
-        {
-            Entity* playerEntity = players[clientnum]->entity;
-            Entity* torso = vrFindNativePlayerLimb(playerEntity, 1);
-            if (torso)
-            {
-                const float bodyYaw = static_cast<float>(playerEntity->yaw);
-                const float bc = cosf(bodyYaw), bs = sinf(bodyYaw);
-                // Clamp the minimum front clearance to avoid torso clipping.
-                // Previously saved negative depth calibration remains valid.
-                const float beltForward = std::max(1.6f, 3.4f + h.forward);
-                marker->x = playerEntity->x + beltForward * bc - h.side * bs;
-                marker->y = playerEntity->y + beltForward * bs + h.side * bc;
-                marker->z = torso->z + 2.4f - h.up;
-                marker->yaw = bodyYaw + h.yaw;
-            }
+        // GA28: same headset-relative attachment in seated and room-scale
+        // modes. Use the shared center view, never either eye's stereo offset.
+        if(index==0) {
+            const view_t head=vrRoomCamera(cameras[clientnum]);
+            const auto belt=vrHeadsetBeltPose(head,vrHeadYaw,h);
+            marker->x=belt.x;marker->y=belt.y;marker->z=belt.z;
+            marker->yaw=belt.yaw;
         }
         // STEP638FZ7: Changing capture bounds must not resize the player's
         // calibrated hotbar. Compute one stable world-space unit per ORIGINAL
@@ -11245,11 +11925,11 @@ static void vrDrawTrackedHeldVoxel(view_t* eyeCamera, Entity* item,
     const VrWeaponGripProfile grip = vrWeaponGripForItem(equipped);
     // STEP638FO: One complete native world-book voxel, at half the
     // previous VR-only size. Never resize unrelated offhand items.
-    const float visualScale = vrWorldBook ? (0.5f * VR_SHIELD_VOXEL_SCALE) :
+    const float visualScale = (equipped && itemCategory(equipped) == POTION ? 0.5f : 1.0f) * (vrWorldBook ? (0.5f * VR_SHIELD_VOXEL_SCALE) :
         (rightHand ? VR_ITEM_VOXEL_SCALE * grip.scaleMultiplier :
             VR_SHIELD_VOXEL_SCALE) *
         ((item->scalex > 0.01 && item->scalex < 4.0) ?
-            static_cast<float>(item->scalex) : 1.0f);
+            static_cast<float>(item->scalex) : 1.0f));
     const float reach = rightHand ? grip.forwardOffset : 0.55f;
     const float side = rightHand ? grip.sideOffset : 0.0f;
     const float up = rightHand ? grip.upOffset : 0.12f;
@@ -11580,7 +12260,7 @@ static void vrProcessPhysicalMelee(XrTime predictedDisplayTime)
         clientnum >= 0 && clientnum < MAXPLAYERS &&
         players[clientnum] && players[clientnum]->entity &&
         players[clientnum]->shootmode && stats[clientnum] &&
-        map.entities && g_xrControllerHands[1].gripPoseValid;
+        map.entities && g_xrControllerHands[1].gripPoseValid && !vrWorldGrabOwnsGrip(1);
     vrLoadMeleeTuning();
     if (!validPlayer)
     {
@@ -11663,7 +12343,7 @@ static void vrProcessPhysicalMelee(XrTime predictedDisplayTime)
         (g_xrViews[0].pose.position.z + g_xrViews[1].pose.position.z)*.5f
     };
     // The exact world transform already used for the displayed weapon.
-    const view_t& camera = cameras[clientnum];
+    const view_t camera = vrRoomCamera(cameras[clientnum]);
     const float c = cosf(camera.ang), s = sinf(camera.ang);
     const float right = gripPose.position.x - head.x;
     const float forward = head.z - gripPose.position.z;
@@ -12408,6 +13088,8 @@ static void vrApplyHermitReturnView(view_t& eye, const VrHermitReturnView& ancho
 
 void vrRenderStereoTestFrame(view_t* camera)
 {
+    view_t trackedRoomCamera{};
+    if(camera){trackedRoomCamera=vrRoomCamera(*camera);camera=&trackedRoomCamera;}
     // Verify that Barony's dungeon camera reaches the stereo renderer.
     static bool cameraLogged = false;
 

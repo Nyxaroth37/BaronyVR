@@ -364,6 +364,12 @@ bool jewelItemRecruit(Entity* parent, Entity* entity, int itemStatus, const char
 
 void actItem(Entity* my)
 {
+#if defined(_WIN32) && !defined(EDITOR)
+    // GA24: a held loose item remains the same world entity/stack. Pause
+    // native item physics and pickup only while the VR pilot owns this UID.
+    extern bool vrTickHeldWorldItem(Entity*);
+    if (vrTickHeldWorldItem(my)) return;
+#endif
 	Item* item;
 	int i;
 

@@ -3259,6 +3259,10 @@ void drawStatusNew(const int player)
 			if ( itemCategory(item) == POTION )
 			{
 				badpotion = isPotionBad(*item);
+#if defined(_WIN32) && !defined(EDITOR)
+                extern bool vrPreferBottleEquip(int playerIndex);
+                badpotion = badpotion || vrPreferBottleEquip(player);
+#endif
 			}
 
 			if ( itemCategory(item) == SPELLBOOK && (item->identified || itemIsEquipped(item, player)) )

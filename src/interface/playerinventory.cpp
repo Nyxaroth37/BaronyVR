@@ -11513,6 +11513,10 @@ std::vector<ItemContextMenuPrompts> getContextMenuOptionsForItem(const int playe
 	if ( itemCategory(item) == POTION )
 	{
 		bool is_potion_bad = isPotionBad(*item);
+#if defined(_WIN32) && !defined(EDITOR)
+                extern bool vrPreferBottleEquip(int playerIndex);
+                is_potion_bad = is_potion_bad || vrPreferBottleEquip(player);
+#endif
 		if ( is_potion_bad )
 		{
 			options.push_back(PROMPT_EQUIP);

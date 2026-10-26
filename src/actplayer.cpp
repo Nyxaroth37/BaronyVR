@@ -4799,10 +4799,18 @@ void Player::PlayerMovement_t::handlePlayerMovement(bool useRefreshRateDelta)
 		}
 
 		real_t defendSpeed = (1.0 + defendPenalty);
-		PLAYER_VELX += y_force * cos(my->yaw) * .045 * speedFactor / (defendSpeed);
-		PLAYER_VELY += y_force * sin(my->yaw) * .045 * speedFactor / (defendSpeed);
-		PLAYER_VELX += x_force * cos(my->yaw + PI / 2) * .0225 * speedFactor / (defendSpeed);
-		PLAYER_VELY += x_force * sin(my->yaw + PI / 2) * .0225 * speedFactor / (defendSpeed);
+        // GA29: only the local VR virtual stick in active room tracking uses
+        // headset-relative forward. Desktop/controllers and other modes retain native yaw.
+        real_t movementYaw=my->yaw;
+#if defined(_WIN32) && !defined(EDITOR)
+        extern bool vrGetRoomStickMovementYaw(int playerIndex,real_t* outYaw);
+        real_t trackedMovementYaw=movementYaw;
+        if(vrGetRoomStickMovementYaw(PLAYER_NUM,&trackedMovementYaw))movementYaw=trackedMovementYaw;
+#endif
+		PLAYER_VELX += y_force * cos(movementYaw) * .045 * speedFactor / (defendSpeed);
+		PLAYER_VELY += y_force * sin(movementYaw) * .045 * speedFactor / (defendSpeed);
+		PLAYER_VELX += x_force * cos(movementYaw + PI / 2) * .0225 * speedFactor / (defendSpeed);
+		PLAYER_VELY += x_force * sin(movementYaw + PI / 2) * .0225 * speedFactor / (defendSpeed);
 
 	}
 

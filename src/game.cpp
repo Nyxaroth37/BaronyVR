@@ -7909,6 +7909,12 @@ int main(int argc, char** argv)
 					}
 				}
 
+				// GA26: commit queued room-scale steps on REAL entity coordinates.
+				// This must precede updateClocks() and the temporary render poses.
+#if defined(_WIN32) && !defined(EDITOR)
+                extern void vrApplyPendingRoomScaleMovement();
+                vrApplyPendingRoomScaleMovement();
+#endif
 				// main drawing
 				drawClearBuffers();
 
