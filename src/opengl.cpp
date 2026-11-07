@@ -1040,6 +1040,12 @@ bool vrCameraTrackingEnabled = false;
 float vrHeadYaw = 0.0f;
 // Vertical headset rotation in radians.
 float vrHeadPitch = 0.0f;
+// OpenXR optical-axis headset roll, in radians (desktop camera unchanged).
+float vrHeadRoll = 0.0f;
+// S9 experimental visual-only size; no physics or tracked metre conversion.
+float vrVisualSceneScale = 1.0f;
+// S11 experimental stereo-based world sizing; default false for legacy rendering.
+bool vrS11LiveWorldScaleActive = false;
 // Per-eye OpenXR projection override.
 bool vrEyeProjectionEnabled = false;
 float vrEyeProjectionMatrix[16] = {};
@@ -1142,9 +1148,29 @@ void glBeginCamera(view_t* camera, bool useHDR, map_t& map)
         (void)perspective(&proj, fov, aspect, CLIPNEAR, CLIPFAR);
     }
     (void)perspective(&camera->proj_hud, 60.f, aspect, CLIPNEAR, CLIPFAR);
+    // Validated S2/S3: inverse optical-axis roll PRECEDES the existing
+    // inverse pitch/yaw. Post-multiplying a roll after yaw/pitch would rotate
+    // about a world-space axis rather than the viewer's optical axis.
+    // This view-only correction does not change game yaw, aiming, HUD,
+    // body models, calibration, or the underlying OpenXR projections.
+    if (vrCameraTrackingEnabled)
+    {
+        (void)rotate_mat(&view, &view2,
+            -vrHeadRoll * 180.f / PI, &identity.z);
+        view2 = view;
+    }
     (void)rotate_mat(&view, &view2, rotx, &identity.x); view2 = view;
     (void)rotate_mat(&view, &view2, roty, &identity.y); view2 = view;
     (void)rotate_mat(&view, &view2, rotz, &identity.z); view2 = view;
+    // Scale the rendered scene about the EXISTING camera position, without
+    // moving gameplay entities or altering hand/room tracking conversions.
+    // Default 1.0 reproduces the validated S8D renderer byte-for-byte in math.
+    if (vrCameraTrackingEnabled && !vrS11LiveWorldScaleActive && vrVisualSceneScale != 1.0f)
+    {
+        const vec4_t size(vrVisualSceneScale, vrVisualSceneScale,
+            vrVisualSceneScale, 0.0f);
+        (void)scale_mat(&view, &view2, &size); view2 = view;
+    }
     (void)translate_mat(&view, &view2, &translate); view2 = view;
     
     // store proj * view

@@ -9,7 +9,7 @@ extern bool drawingGui;
 namespace VrCalibrationMenu {
 static constexpr float degrees=57.2957795131f;
 static bool legacy=false,held=false,armed=false,hit=false;
-static int tab=0,sub=0,hand=0,drag=-1;
+static int tab=3,sub=0,hand=0,drag=-1;
 static float pointerX=0.f,pointerY=0.f;
 static float bowRotationDelta[2][3]{};
 static std::unique_ptr<Frame> frame;
@@ -78,7 +78,7 @@ template<class Pose> static void pose(Pose& p,float limit,const char* unit,int f
 }
 static const char* section(int index) {
     static const char* names[4][7]={
-        {"Arm placement","Body pose setup","Room-scale tracking",nullptr},
+        {"Arm placement","Body pose setup","Room-scale tracking","World & menu size",nullptr},
         {"Held item","Crosshair / shots","Spell aim","Bow grip","Bow draw",nullptr},
         {"HP / Mana wrist","Minimap wrist","Status icons","Belt hotbar","XP bar","Party health bars","Skill notifications"},
         {"Getting started","Bow handedness","Melee sensitivity","Backpack & items","D-pad & turning","Visibility tests",nullptr}
@@ -118,8 +118,9 @@ static void build() {
     auto* rocks=frame->addImage(rect(94,145,1092,480),0xffffffff,
         "*images/ui/Main Menus/Settings/GenericWindow/UI_MM14_Rocks01.png","rocks");rocks->tiled=true;
     label("title","VR CALIBRATION",485,57,360);
-    const char* tabs[]={"Body","Weapons & Items","HUD","Controls & Help"};
-    for(int i=0;i<4;++i)button(("tab"+std::to_string(i)).c_str(),tabs[i],SDL_Rect{100+i*273,100,260,54},i,i==tab);
+    const char* tabs[]={"Controls & Help","Body","Weapons & Items","HUD"};
+    const int tabOrder[]={3,0,1,2}; // UI-only order; IDs and saved values unchanged.
+    for(int i=0;i<4;++i)button(("tab"+std::to_string(i)).c_str(),tabs[i],SDL_Rect{100+i*273,100,260,54},tabOrder[i],tab==tabOrder[i]);
     for(int i=0;i<7 && section(i);++i)button(("section"+std::to_string(i)).c_str(),section(i),
         SDL_Rect{104,173+i*51,230,44},10+i,i==sub);
     label("section_title",section(sub),360,173,810,30);
@@ -140,6 +141,15 @@ static void build() {
         button("room_on",g_vrRoomScaleEnabled?"Tracking test: ON":"Enable standing tracking",SDL_Rect{365,420,440,45},90,g_vrRoomScaleEnabled);
         button("room_off","Disable tracking test",SDL_Rect{365,475,440,45},91,!g_vrRoomScaleEnabled);
         button("room_center","Recenter upright",SDL_Rect{825,420,330,45},92);
+    } else if(tab==0 && sub==3) {
+        slider("scene_visual_size","World visual size",&vrVisualSceneScale,.70f,1.30f,0,
+            "Visual scene scale only: no collision, reach, tracking metres, or world geometry changes.","x",1.f,4);
+        slider("vr_menu_size","VR menu size",&g_vrMenuSizeMultiplier,.80f,1.40f,1,
+            "Changes the physical OpenXR menu panel width and height together.","x",1.f,4);
+        slider("vr_menu_distance","VR menu distance",&g_vrMenuDistanceMeters,.75f,1.80f,2,
+            "Moves the menu panel away from or toward your eyes in metres.","m",1.f,4);
+        label("comfort_note","World size is visual-only while stereo-eye translation is being audited.\nThis is NOT a change to collision, weapon range or physical movement.\nMenu size and distance update the same quad used for pointer hits.",360,393,810,98);
+        button("comfort_reset","Reset all three to 1.00",SDL_Rect{365,510,445,40},96);
     } else if(tab==1 && sub==0) {
         button("offhand","Offhand slot",SDL_Rect{360,205,225,32},30,hand==0);
         button("mainhand","Weapon slot",SDL_Rect{600,205,225,32},31,hand==1);
@@ -219,15 +229,16 @@ static void build() {
     }
     button("save_close","Save & Close",SDL_Rect{820,590,340,46},80);
     label("footer","BARONY VR  |  Point with right hand. Trigger: click / drag.  X+Y: save / close.",165,647,1010);
-    auto* cursor=frame->addImage(rect(0,0,24,30),0xffffffff,"*images/system/cursor_hand.png","pointer");cursor->ontop=true;
+    auto* cursor=frame->addImage(rect(0,0,56,70),0xffffffff,"*images/system/cursor_hand.png","pointer");cursor->ontop=true; // S15: larger visual, unchanged hotspot
 }
 static void save() {
     if(g_vrArmCalibrationDirty)vrSaveVisualArmCalibration();
     if(g_vrFlailSettingsDirty)vrSaveModeSettings();
     if(g_vrMeleeTuningDirty)vrSaveMeleeTuning();
+    if(g_vrVisualComfortDirty)vrSaveVisualComfort();
 }
 static void open() {
-    legacy=false;held=false;armed=false;hit=false;drag=-1;tab=0;sub=0;
+    legacy=false;held=false;armed=false;hit=false;drag=-1;tab=3;sub=0; // S15: Help first
     hand=g_vrArmCalibrationSelected;frameTab=-1;
     g_vrBodyCalibrationPage=false;g_vrArmCalibrationEditMelee=false;
     for(int h=0;h<2;++h)for(int a=0;a<3;++a)bowRotationDelta[h][a]=0.f;
@@ -258,6 +269,17 @@ static void action(int id) {
     else if(id==93){g_vrVisibilityProbeFull=!g_vrVisibilityProbeFull;printlog("[VR GA30] angular culling probe full=%d",g_vrVisibilityProbeFull?1:0);}
     else if(id==94){g_vrSpatialHudProbeHidden=!g_vrSpatialHudProbeHidden;printlog("[VR GA30] floating HUD probe hidden=%d",g_vrSpatialHudProbeHidden?1:0);}
     else if(id==95){g_vrVisibilityProbeFull=false;g_vrSpatialHudProbeHidden=false;printlog("[VR GA30] visibility probes reset");}
+    else if(id==96){
+        const float oldWorld=vrVisualSceneScale,oldMenu=g_vrMenuSizeMultiplier,
+            oldDistance=g_vrMenuDistanceMeters;
+        vrVisualSceneScale=1.f;g_vrMenuSizeMultiplier=1.f;g_vrMenuDistanceMeters=1.f;
+        g_vrVisualComfortDirty=true;
+        if(!vrSaveVisualComfort()){
+            vrVisualSceneScale=oldWorld;g_vrMenuSizeMultiplier=oldMenu;
+            g_vrMenuDistanceMeters=oldDistance;
+            printlog("OpenXR S9: failed to save visual comfort reset; restored previous values.");
+        }
+    }
     drag=-1;armed=false;frameTab=-1;
     g_vrBowPreview.drawing=false;g_vrBowPreview.armed=false;
     if(!legacy)syncContext();
@@ -271,9 +293,10 @@ static void input(XrTime time) {
     const bool down=focused && controller.trigger>=(held?.35f:.65f);
     if(!focused || !controller.aimPoseValid){armed=false;held=down;drag=-1;return;}
     if(controller.trigger<.35f)armed=true;
-    if(g_xrRightAimSpace!=XR_NULL_HANDLE && g_xrGuiViewSpace!=XR_NULL_HANDLE) {
+    const XrSpace panelSpace = g_xrGuiLayer.space != XR_NULL_HANDLE ? g_xrGuiLayer.space : g_xrGuiViewSpace;
+    if(g_xrRightAimSpace!=XR_NULL_HANDLE && panelSpace!=XR_NULL_HANDLE) {
         XrSpaceLocation location{XR_TYPE_SPACE_LOCATION};
-        if(XR_SUCCEEDED(xrLocateSpace(g_xrRightAimSpace,g_xrGuiViewSpace,time,&location)) &&
+        if(XR_SUCCEEDED(xrLocateSpace(g_xrRightAimSpace,panelSpace,time,&location)) &&
             (location.locationFlags&XR_SPACE_LOCATION_POSITION_VALID_BIT) &&
             (location.locationFlags&XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)) {
             const auto& p=location.pose;const auto& q=p.orientation;
@@ -302,9 +325,12 @@ static void input(XrTime time) {
             if(e.kind==3)vrBowAdjustControllerRotation(1-g_vrBowDrawHand,e.axis,next-*e.data);
             *e.data=next;
             if(e.kind==2)g_vrMeleeTuningDirty=true;
+            else if(e.kind==4)g_vrVisualComfortDirty=true;
             else g_vrArmCalibrationDirty=true;
         }
     }
+    if(!down && held && g_vrVisualComfortDirty && !vrSaveVisualComfort())
+        printlog("OpenXR S9: visual comfort save failed; settings remain unsaved.");
     if(!down)drag=-1;
     held=down;
     if(tab==0 && sub==1 && visible()) {
@@ -341,7 +367,7 @@ static bool draw() {
     }
     if(status)status->setText(hint);
     if(auto* cursor=frame->findImage("pointer")) {
-        cursor->disabled=!hit;cursor->pos=rect(static_cast<int>(pointerX),static_cast<int>(pointerY),24,30);
+        cursor->disabled=!hit;cursor->pos=rect(static_cast<int>(pointerX),static_cast<int>(pointerY),56,70);
     }
     VrNativeHud::GlState state;
     const bool success=VrNativeHud::render(scratch,target,SDL_Rect{0,0,frameWidth,frameHeight},frameWidth,frameHeight,[](){

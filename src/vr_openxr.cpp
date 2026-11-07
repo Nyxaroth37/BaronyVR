@@ -40,6 +40,8 @@ struct view_t;
 extern bool vrCameraViewportEnabled;
 // Controls headset tracking for VR camera rendering.
 extern bool vrCameraTrackingEnabled;
+// Step S2: tracked roll, consumed by opt-in view-only experiment.
+extern float vrHeadRoll;
 // STEP 616: Barony's local player appends several HUD entities to the
 // bodyparts vector BEFORE the actual torso/legs/arms. Therefore indices 4
 // and 5 are NOT the world right/left arms. Locate real limbs by their
@@ -165,6 +167,36 @@ static XrSession g_xrSession = XR_NULL_HANDLE;
 static XrSpace g_xrReferenceSpace = XR_NULL_HANDLE;
 // Headset-relative space for the VR interface.
 static XrSpace g_xrGuiViewSpace = XR_NULL_HANDLE;
+// S14 extends the S5 title LOCAL-space menu anchor to in-game UI during the
+// opt-in compatibility test. The GUI laser uses the layer's exact XR space.
+static XrSpace g_xrS5IntroMenuAnchorSpace = XR_NULL_HANDLE;
+// S7 diagnostics are logging-only: no anchor reset, room movement or recenter changes.
+static bool vrS7RecenterDiagnosticsRequested()
+{
+    static const bool enabled = []() {
+        const char* value = std::getenv("BARONY_VR_TEST_RECENTER_DIAG");
+        return value && value[0] == '1' && value[1] == '\0';
+    }();
+    return enabled;
+}
+static bool g_vrS7RefSpaceChangePending = false;
+static XrTime g_vrS7RefSpaceChangeTime = 0;
+// S16 default-on: use the runtime's ordinary LOCAL recenter notification rather
+// than attempting to bind or intercept a headset system button.
+static bool vrS8AutoRecenterRequested()
+{
+    static const bool enabled = []() {
+        const char* value = std::getenv("BARONY_VR_TEST_AUTO_RECENTER");
+        return !(value && value[0] == '0' && value[1] == '\0'); // S16 validated defaults ON; explicit 0 opts out
+    }();
+    return enabled;
+}
+// Track event effective times: a runtime may schedule more than one recenter.
+// Never apply a future-effective origin change to an earlier frame.
+static std::vector<XrTime> g_vrS8PendingLocalRecenterTimes;
+// S12 read-only to gameplay: rebase the experimental visual head anchor
+// whenever the runtime explicitly changes the LOCAL reference origin.
+static bool g_vrS12RebaseRequested = true;
 // OpenXR action set for Quest 3 controller input.
 static XrActionSet g_xrControllerActionSet = XR_NULL_HANDLE;
 // OpenXR paths identifying the player's left and right hands.
@@ -503,7 +535,7 @@ static void vrBindVirtualControllerInLobby()
 // Keep the saved setting beside Barony's normal working-directory files.
 // The first run defaults to SEATED: physical movement is opt-in.
 enum class VrPlayMode { Seated, Standing };
-static VrPlayMode g_xrPlayMode = VrPlayMode::Seated;
+static VrPlayMode g_xrPlayMode = VrPlayMode::Standing; // S13: default Room Scale play mode
 static bool g_xrModeSettingsLoaded = false;
 static bool g_xrRoomRecalibrate = true;
 static bool g_xrRoomCalibrated = false;
@@ -521,10 +553,74 @@ static float g_xrRoomStickY = 0.0f;
 static XrVector3f g_xrRoomPreviousHead{};
 static XrTime g_xrRoomPreviousTime = 0;
 static constexpr float VR_TRACKING_UNITS_PER_METER=8.0f;
+// S9 experimental visual-comfort profile. These settings do not modify
+// tracking units, physical collision, weapon reach, or OpenXR eye projections.
+// The world-size control is a VISUAL calibration, not a metric physics scale.
+extern float vrVisualSceneScale; // defined in opengl.cpp for all build targets
+extern bool vrS11LiveWorldScaleActive; // defined in opengl.cpp, VR-only experiment
+static float g_vrMenuSizeMultiplier = 1.0f;
+static float g_vrMenuDistanceMeters = 1.0f;
+static bool g_vrVisualComfortLoaded = false;
+static bool g_vrVisualComfortDirty = false;
+static const char* VR_VISUAL_COMFORT_FILE = "vr_visual_comfort.cfg";
+static float vrComfortClamp(float value, float lo, float hi, float fallback)
+{
+    return std::isfinite(value) ? std::max(lo, std::min(hi, value)) : fallback;
+}
+static void vrLoadVisualComfort()
+{
+    if (g_vrVisualComfortLoaded) return;
+    g_vrVisualComfortLoaded = true;
+    FILE* file = std::fopen(VR_VISUAL_COMFORT_FILE, "rb");
+    if (!file) return;
+    char line[160]{};
+    while (std::fgets(line, sizeof(line), file))
+    {
+        char key[64]{};
+        float value = 0.0f;
+        if (std::sscanf(line, "%63s %f", key, &value) != 2) continue;
+        if (std::strcmp(key, "visual_world_size") == 0)
+            vrVisualSceneScale = vrComfortClamp(value, 0.70f, 1.30f, 1.0f);
+        else if (std::strcmp(key, "menu_size") == 0)
+            g_vrMenuSizeMultiplier = vrComfortClamp(value, 0.80f, 1.40f, 1.0f);
+        else if (std::strcmp(key, "menu_distance_m") == 0)
+            g_vrMenuDistanceMeters = vrComfortClamp(value, 0.75f, 1.80f, 1.0f);
+    }
+    std::fclose(file);
+}
+static bool vrSaveVisualComfort()
+{
+    const char* tmp = "vr_visual_comfort.cfg.tmp";
+    FILE* file = std::fopen(tmp, "wb");
+    if (!file) return false;
+    const int count = std::fprintf(file,
+        "# S9 visual-only VR comfort; 1.0 is the validated baseline\n"
+        "visual_world_size %.6f\nmenu_size %.6f\nmenu_distance_m %.6f\n",
+        static_cast<double>(vrVisualSceneScale),
+        static_cast<double>(g_vrMenuSizeMultiplier),
+        static_cast<double>(g_vrMenuDistanceMeters));
+    const int closed = std::fclose(file);
+    if (count < 0 || closed != 0) { std::remove(tmp); return false; }
+    if (!MoveFileExA(tmp, VR_VISUAL_COMFORT_FILE,
+        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+    {
+        std::remove(tmp);
+        return false;
+    }
+    g_vrVisualComfortDirty = false;
+    return true;
+}
+static void vrApplyMenuVisualComfort()
+{
+    vrLoadVisualComfort();
+    g_xrGuiLayer.pose.position.z = -g_vrMenuDistanceMeters;
+    g_xrGuiLayer.size.width = 1.2f * g_vrMenuSizeMultiplier;
+    g_xrGuiLayer.size.height = 0.675f * g_vrMenuSizeMultiplier;
+}
 // GA30 temporary diagnosis only; never saved to a player profile.
 static bool g_vrVisibilityProbeFull=false;
 static bool g_vrSpatialHudProbeHidden=false;
-static bool g_vrRoomScaleEnabled=false; // opt-in test, not a saved default
+static bool g_vrRoomScaleEnabled=true; // S13: default ON; saved room_scale=0 explicitly disables
 static bool g_vrRoomScaleActive=false;
 static bool g_vrRoomScaleRebase=true;
 // STEP638FX: The vanilla Hermit Fowl Spirit owns the dungeon camera during
@@ -612,12 +708,13 @@ static void vrSaveModeSettings()
             "vr_enabled=%d\nflail_visual=%d\n"
             "flail_anchor_forward=%.3f\nflail_anchor_up=%.3f\n"
             "flail_chain_length=%.3f\nflail_anchor_side=%.3f\n"
-            "flail_damping=%.3f\nflail_model_size=%.3f\nmode=%s\n",
+            "flail_damping=%.3f\nflail_model_size=%.3f\nmode=%s\nroom_scale=%d\n",
             g_vrUserEnabled ? 1 : 0, g_vrFlailVisualEnabled ? 1 : 0,
             g_vrFlailAnchorForward, g_vrFlailAnchorUp,
             g_vrFlailChainLength, g_vrFlailAnchorSide, g_vrFlailDamping,
             g_vrFlailModelSize,
-            g_xrPlayMode == VrPlayMode::Standing ? "standing" : "seated");
+            g_xrPlayMode == VrPlayMode::Standing ? "standing" : "seated",
+            g_vrRoomScaleEnabled ? 1 : 0);
         std::fclose(file);
         g_vrFlailSettingsDirty = false;
     }
@@ -639,12 +736,18 @@ static void vrLoadModeSettings()
                 g_xrPlayMode = VrPlayMode::Standing;
             else if (std::strncmp(line, "mode=seated", 11) == 0)
                 g_xrPlayMode = VrPlayMode::Seated;
+            else if (std::strncmp(line, "room_scale=1", 12) == 0)
+                g_vrRoomScaleEnabled = true;
+            else if (std::strncmp(line, "room_scale=0", 12) == 0)
+                g_vrRoomScaleEnabled = false;
         }
         std::fclose(file);
     }
     else vrSaveModeSettings();
     std::printf("OpenXR VR: PLAY MODE = %s (vr_settings.cfg). Hold BOTH stick clicks 1.5s to switch; hold with RIGHT grip to calibrate.\n",
         vrPlayModeName());
+    printlog("[VR S13] startup: roomScale=%d playMode=%s (default ON unless room_scale=0)",
+        g_vrRoomScaleEnabled ? 1 : 0, vrPlayModeName());
 }
 
 static void vrRequestRoomCalibration()
@@ -656,7 +759,11 @@ static void vrRequestRoomCalibration()
     g_xrPhysicalSneaking = false;
     g_xrRoomSneakLatched = false;
     g_xrRoomStickX = g_xrRoomStickY = 0.0f;
-    std::printf("OpenXR VR: ROOM HEIGHT + MOTION RECALIBRATION requested.\n");
+    printlog("OpenXR VR: ROOM HEIGHT + MOTION RECALIBRATION requested.");
+    if (vrS7RecenterDiagnosticsRequested())
+        printlog("OpenXR S7: in-app room calibration requested; playMode=%s roomScale=%d menuAnchor=%d.\n",
+            vrPlayModeName(), g_vrRoomScaleEnabled ? 1 : 0,
+            g_xrS5IntroMenuAnchorSpace != XR_NULL_HANDLE ? 1 : 0);
 }
 
 static void vrTogglePlayMode()
@@ -2315,6 +2422,7 @@ static void setEnabled(bool enabled) {
     state.previousTime=0;clearPending();
     if(enabled && g_xrPlayMode!=VrPlayMode::Standing)vrTogglePlayMode();
     vrRequestRoomCalibration();
+    vrSaveModeSettings(); // S13: preserve player preference across launches.
     printlog("[VR GA26] positional tracking test %s; mode=%s",enabled?"ON":"OFF",vrPlayModeName());
 }
 } // namespace VrRoomScale
@@ -3165,8 +3273,9 @@ static void vrUpdateVRShortcutGestures(XrTime predictedDisplayTime)
 // Report selection only after that pump, not immediately after SDL_PushEvent.
 static bool g_xrVrPointerPostReleasePending = false;
 
-// Cast the chosen controller's OpenXR aim ray onto the headset-anchored
-// 1.2 m x 0.675 m GUI quad, centered one meter forward in VIEW space.
+// Cast the chosen controller's OpenXR aim ray onto the active GUI quad.
+// S5/S14 use the quad's actual VIEW/LOCAL-anchor space to keep cursor and
+// panel coordinates identical. The S14 in-game extension is opt-in.
 // Convert the ray position into Barony's existing real + virtual mouse paths.
 // This makes menu items highlight on hover, not just draw a decorative cursor.
 static void vrUpdateGuiLaserPointer(XrTime predictedDisplayTime)
@@ -3254,7 +3363,8 @@ static void vrUpdateGuiLaserPointer(XrTime predictedDisplayTime)
         g_xrSessionState == XR_SESSION_STATE_FOCUSED &&
         g_xrControllerActionsAttached &&
         screen && g_xrGuiSwapchain != XR_NULL_HANDLE &&
-        g_xrGuiViewSpace != XR_NULL_HANDLE;
+        g_xrGuiViewSpace != XR_NULL_HANDLE &&
+        g_xrGuiLayer.space != XR_NULL_HANDLE;
 
     // STEP 627: Controller-only horizontal alignment calibration. Keep this
     // separate from mouse button ownership so existing drags are untouched.
@@ -3303,7 +3413,7 @@ static void vrUpdateGuiLaserPointer(XrTime predictedDisplayTime)
         if (aimSpace != XR_NULL_HANDLE)
         {
             XrSpaceLocation location{ XR_TYPE_SPACE_LOCATION };
-            const XrResult res = xrLocateSpace(aimSpace, g_xrGuiViewSpace,
+            const XrResult res = xrLocateSpace(aimSpace, g_xrGuiLayer.space,
                 predictedDisplayTime, &location);
             if (XR_SUCCEEDED(res) &&
                 (location.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) &&
@@ -5160,6 +5270,23 @@ void vrPollOpenXREvents()
         return;
     }
 
+    // S8D: The retail log already captures printlog() (e.g. GA26 room
+    // origin messages). Keep all recenter diagnostics on that same path.
+    // One marker per OpenXR session proves that polling and opt-in flags
+    // were active, even if a runtime emits no reference-space change event.
+    if (g_xrSession != XR_NULL_HANDLE &&
+        (vrS7RecenterDiagnosticsRequested() || vrS8AutoRecenterRequested()))
+    {
+        static XrSession lastLoggedSession = XR_NULL_HANDLE;
+        if (lastLoggedSession != g_xrSession)
+        {
+            lastLoggedSession = g_xrSession;
+            printlog("OpenXR S8D: event polling ACTIVE; S7 diagnostics=%d; S8 auto recenter=%d.",
+                vrS7RecenterDiagnosticsRequested() ? 1 : 0,
+                vrS8AutoRecenterRequested() ? 1 : 0);
+        }
+    }
+
     XrEventDataBuffer event{};
     event.type = XR_TYPE_EVENT_DATA_BUFFER;
 
@@ -5174,6 +5301,11 @@ void vrPollOpenXREvents()
 
             if (stateEvent->session == g_xrSession)
             {
+                if (vrS7RecenterDiagnosticsRequested())
+                {
+                    printlog("OpenXR S8D: session state event=%d.",
+                        static_cast<int>(stateEvent->state));
+                }
                 g_xrSessionState = stateEvent->state;
                 if (g_xrSessionState != XR_SESSION_STATE_FOCUSED)
                 {
@@ -5212,6 +5344,62 @@ void vrPollOpenXREvents()
                         );
                     }
                 }
+            }
+        }
+        else if (event.type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING)
+        {
+            // OpenXR may announce a future-effective LOCAL recenter. Record
+            // what the runtime says; do NOT rebase anchors ahead of changeTime.
+            const auto* change = reinterpret_cast<const
+                XrEventDataReferenceSpaceChangePending*>(&event);
+            if (vrS7RecenterDiagnosticsRequested())
+            {
+                printlog("OpenXR S8D: reference-space event received; currentSession=%d type=%d time=%lld.",
+                    change->session == g_xrSession ? 1 : 0,
+                    static_cast<int>(change->referenceSpaceType),
+                    static_cast<long long>(change->changeTime));
+            }
+            if (change->session == g_xrSession &&
+                vrS7RecenterDiagnosticsRequested())
+            {
+                printlog(
+                    "OpenXR S7: reference-space change PENDING type=%d changeTime=%lld poseValid=%d menuAnchor=%d roomScale=%d.\n",
+                    static_cast<int>(change->referenceSpaceType),
+                    static_cast<long long>(change->changeTime),
+                    change->poseValid == XR_TRUE ? 1 : 0,
+                    g_xrS5IntroMenuAnchorSpace != XR_NULL_HANDLE ? 1 : 0,
+                    g_vrRoomScaleEnabled ? 1 : 0);
+                if (change->poseValid == XR_TRUE)
+                {
+                    const XrVector3f& p = change->poseInPreviousSpace.position;
+                    printlog("OpenXR S7: reference-space origin delta xyz=(%.3f %.3f %.3f)m.\n",
+                        static_cast<double>(p.x), static_cast<double>(p.y),
+                        static_cast<double>(p.z));
+                }
+                g_vrS7RefSpaceChangeTime = change->changeTime;
+                g_vrS7RefSpaceChangePending = true;
+            }
+            // The app's rendering, HMD poses and S5 anchor all use LOCAL.
+            // Ignore unrelated STAGE/VIEW events and events from old sessions.
+            if (vrS8AutoRecenterRequested() &&
+                change->session == g_xrSession &&
+                change->referenceSpaceType == XR_REFERENCE_SPACE_TYPE_LOCAL)
+            {
+                printlog(
+                    "OpenXR S8: LOCAL recenter PENDING time=%lld poseValid=%d anchor=%d roomScale=%d.\n",
+                    static_cast<long long>(change->changeTime),
+                    change->poseValid == XR_TRUE ? 1 : 0,
+                    g_xrS5IntroMenuAnchorSpace != XR_NULL_HANDLE ? 1 : 0,
+                    g_vrRoomScaleEnabled ? 1 : 0);
+                // Bounded queue, no action at event receipt time. OpenXR
+                // changes reference coordinates only at changeTime.
+                if (g_vrS8PendingLocalRecenterTimes.size() >= 16)
+                {
+                    g_vrS8PendingLocalRecenterTimes.erase(
+                        g_vrS8PendingLocalRecenterTimes.begin());
+                    printlog("OpenXR S8: recenter queue full; oldest event discarded.\n");
+                }
+                g_vrS8PendingLocalRecenterTimes.push_back(change->changeTime);
             }
         }
 
@@ -5505,6 +5693,179 @@ static void vrUpdateControllerInputs(XrTime predictedDisplayTime)
     }
 }
 
+// S15: the calibration menu now shares the same LOCAL-space panel anchor
+// as the title and gameplay UI. Its own private laser must also locate
+// against g_xrGuiLayer.space (rather than always assuming VIEW space).
+static bool vrS15CalibrationMenuAnchorRequested()
+{
+    static const bool enabled = []() {
+        const char* value = std::getenv("BARONY_VR_TEST_CAL_MENU_ANCHOR");
+        return !(value && value[0] == '0' && value[1] == '\0'); // S16 validated defaults ON; explicit 0 opts out
+    }();
+    return enabled;
+}
+static bool vrS14AllMenuAnchorRequested()
+{
+    static const bool enabled = []() {
+        const char* value = std::getenv("BARONY_VR_TEST_ALL_MENU_ANCHOR");
+        return !(value && value[0] == '0' && value[1] == '\0'); // S16 validated defaults ON; explicit 0 opts out
+    }();
+    return enabled;
+}
+static bool vrS5MenuAnchorRequested()
+{
+    static const bool enabled = []() {
+        const char* value = std::getenv("BARONY_VR_TEST_MENU_ANCHOR");
+        return !(value && value[0] == '0' && value[1] == '\0'); // S16 validated defaults ON; explicit 0 opts out
+    }();
+    return enabled;
+}
+static void vrS5ClearIntroMenuAnchor()
+{
+    // Always switch the composition layer off the anchor BEFORE destroying it.
+    g_xrGuiLayer.space = g_xrGuiViewSpace;
+    if (g_xrS5IntroMenuAnchorSpace != XR_NULL_HANDLE)
+    {
+        xrDestroySpace(g_xrS5IntroMenuAnchorSpace);
+        g_xrS5IntroMenuAnchorSpace = XR_NULL_HANDLE;
+        SDL_Log("OpenXR S5: intro menu anchor released; VIEW mode restored.");
+    }
+}
+// S8: Rebase only after OpenXR's scheduled LOCAL origin change becomes
+// effective for this frame. Clear the old physical-motion baseline first,
+// so a tracking jump cannot be converted into walking/teleportation.
+static void vrS8ApplyEffectiveLocalRecenter(XrTime predictedDisplayTime)
+{
+    if (!vrS8AutoRecenterRequested() ||
+        g_vrS8PendingLocalRecenterTimes.empty())
+        return;
+    unsigned int applied = 0;
+    for (size_t i = 0; i < g_vrS8PendingLocalRecenterTimes.size();)
+    {
+        if (predictedDisplayTime >= g_vrS8PendingLocalRecenterTimes[i])
+        {
+            g_vrS8PendingLocalRecenterTimes.erase(
+                g_vrS8PendingLocalRecenterTimes.begin() + i);
+            ++applied;
+        }
+        else
+        {
+            ++i;
+        }
+    }
+    if (!applied) return;
+    // Both reset operations are already used elsewhere in this source.
+    // They do NOT edit/teleport the player entity or move the native camera.
+    // The next valid headset sample restores room height + movement origin.
+    vrRequestRoomCalibration();
+    g_vrS12RebaseRequested = true; // S12's visual origin must track S8 recenter.
+    // Recreate the S5 title anchor from the new LOCAL frame, if the menu is
+    // showing. The existing S5 function retries until tracking is valid and
+    // the controller laser locates itself against that same anchor space.
+    vrS5ClearIntroMenuAnchor();
+    printlog(
+        "OpenXR S8: LOCAL recenter APPLIED at frame=%lld events=%u; room baseline invalidated; menu anchor cleared for rebuild.\n",
+        static_cast<long long>(predictedDisplayTime), applied);
+}
+static void vrS5UpdateIntroMenuAnchor(XrTime predictedDisplayTime)
+{
+    if (vrS7RecenterDiagnosticsRequested() &&
+        g_vrS7RefSpaceChangePending &&
+        predictedDisplayTime >= g_vrS7RefSpaceChangeTime)
+    {
+        printlog(
+            "OpenXR S7: reference-space change EFFECTIVE at frame=%lld; menuAnchorStillPresent=%d roomScaleRebase=%d.\n",
+            static_cast<long long>(predictedDisplayTime),
+            g_xrS5IntroMenuAnchorSpace != XR_NULL_HANDLE ? 1 : 0,
+            g_vrRoomScaleRebase ? 1 : 0);
+        g_vrS7RefSpaceChangePending = false;
+    }
+    const bool calibrationUi = VrCalibrationMenu::visible();
+    const bool gameplayUi = !intro && !g_vrArmCalibrationActive && vrMenuPointerMode();
+    // An editor opened over a paused menu needs a fresh, forward-facing panel
+    // rather than inheriting the previous menu's world anchor.
+    static bool wasCalibrationUi = false;
+    if (calibrationUi != wasCalibrationUi)
+    {
+        vrS5ClearIntroMenuAnchor();
+        wasCalibrationUi = calibrationUi;
+    }
+    const bool wantAnchor = vrS5MenuAnchorRequested() &&
+        (intro || (vrS14AllMenuAnchorRequested() && gameplayUi) ||
+         (vrS15CalibrationMenuAnchorRequested() && calibrationUi)) &&
+        !MainMenu::isCutsceneActive() &&
+        g_xrGuiViewSpace != XR_NULL_HANDLE &&
+        g_xrReferenceSpace != XR_NULL_HANDLE &&
+        g_xrSession != XR_NULL_HANDLE;
+    if (!wantAnchor)
+    {
+        // Never retain the anchor after its UI closes. Without S15 enabled,
+        // the native calibration editor retains its original VIEW behavior.
+        vrS5ClearIntroMenuAnchor();
+        return;
+    }
+    if (g_xrS5IntroMenuAnchorSpace == XR_NULL_HANDLE)
+    {
+        XrSpaceLocation head{ XR_TYPE_SPACE_LOCATION };
+        const XrResult located = xrLocateSpace(g_xrGuiViewSpace,
+            g_xrReferenceSpace, predictedDisplayTime, &head);
+        constexpr XrSpaceLocationFlags required =
+            XR_SPACE_LOCATION_POSITION_VALID_BIT |
+            XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+        // Tracking must be valid. Never place an incorrectly oriented panel.
+        if (XR_FAILED(located) || (head.locationFlags & required) != required)
+        {
+            g_xrGuiLayer.space = g_xrGuiViewSpace;
+            return; // retry on a later frame
+        }
+        // S8C: keep the world-anchored title menu upright. S5 previously
+        // captured the *full* headset quaternion, so a tilted/looking-down
+        // headset at first display or during S8B recenter left the quad tilted
+        // indefinitely. Retain horizontal facing (yaw), not pitch or roll.
+        // In OpenXR the headset looks along -Z and world up is +Y.
+        const XrQuaternionf& q = head.pose.orientation;
+        const float forwardX = -2.0f * (q.x * q.z + q.w * q.y);
+        const float forwardZ = -(1.0f - 2.0f * (q.x * q.x + q.y * q.y));
+        const float horizontalForwardLength2 =
+            forwardX * forwardX + forwardZ * forwardZ;
+        if (horizontalForwardLength2 < 0.0001f)
+        {
+            // Looking almost straight up/down has no stable yaw. Use VIEW
+            // temporarily and retry next frame instead of storing a bad anchor.
+            g_xrGuiLayer.space = g_xrGuiViewSpace;
+            return;
+        }
+        const float menuYaw = atan2f(-forwardX, -forwardZ);
+        XrReferenceSpaceCreateInfo info{ XR_TYPE_REFERENCE_SPACE_CREATE_INFO };
+        info.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
+        info.poseInReferenceSpace = head.pose; // preserve tracked eye position
+        info.poseInReferenceSpace.orientation.x = 0.0f;
+        info.poseInReferenceSpace.orientation.y = sinf(menuYaw * 0.5f);
+        info.poseInReferenceSpace.orientation.z = 0.0f;
+        info.poseInReferenceSpace.orientation.w = cosf(menuYaw * 0.5f);
+        XrSpace anchor = XR_NULL_HANDLE;
+        const XrResult created = xrCreateReferenceSpace(g_xrSession, &info, &anchor);
+        if (XR_FAILED(created) || anchor == XR_NULL_HANDLE)
+        {
+            g_xrGuiLayer.space = g_xrGuiViewSpace;
+            SDL_Log("OpenXR S5: intro anchor unavailable (%d); VIEW fallback.",
+                static_cast<int>(created));
+            return;
+        }
+        g_xrS5IntroMenuAnchorSpace = anchor;
+        SDL_Log("OpenXR S15: %s menu anchored in LOCAL space; controller ray aligned.",
+            calibrationUi ? "VR calibration" : (intro ? "title" : "in-game"));
+        if (vrS7RecenterDiagnosticsRequested())
+        {
+            const XrVector3f& p = head.pose.position;
+            printlog("OpenXR S7: title anchor captured at head xyz=(%.3f %.3f %.3f)m.\n",
+                static_cast<double>(p.x), static_cast<double>(p.y),
+                static_cast<double>(p.z));
+        }
+    }
+    g_xrGuiLayer.space = g_xrS5IntroMenuAnchorSpace;
+}
+
 // Store OpenXR frame information until GUI rendering is complete.
 static bool g_xrFramePending = false;
 static XrTime g_xrPendingDisplayTime = 0;
@@ -5565,6 +5926,14 @@ void vrProcessOpenXRFrame(view_t* camera)
     g_xrFramePending = true;
     g_xrPendingDisplayTime = frameState.predictedDisplayTime;
     g_xrPendingShouldRender = (frameState.shouldRender == XR_TRUE);
+    // Apply the same physical quad dimensions to rendering and all GUI rays.
+    vrApplyMenuVisualComfort();
+    // S8: synchronize a native system recenter on its exact effective frame,
+    // BEFORE S5 rebuilds its GUI anchor and BEFORE controller/room sampling.
+    vrS8ApplyEffectiveLocalRecenter(frameState.predictedDisplayTime);
+    // S5/S14/S15: establish the GUI's space BEFORE controller-ray intersections,
+    // including the private native calibration ray. VIEW is the safe fallback.
+    vrS5UpdateIntroMenuAnchor(frameState.predictedDisplayTime);
     // Synchronize buttons/sticks/triggers and sample both hands at frame time.
     vrUpdateControllerInputs(frameState.predictedDisplayTime);
     // Retrieve headset tracking for both eyes at the predicted display time.
@@ -5576,9 +5945,22 @@ void vrProcessOpenXRFrame(view_t* camera)
     vrProcessPhysicalMelee(frameState.predictedDisplayTime);
     vrUpdateCustomCrosshairAim(frameState.predictedDisplayTime);
     vrSampleHeadsetForLocomotion(frameState.predictedDisplayTime);
+    // S16 default-on: do not turn incidental Standing-mode headset
+    // position deltas (including head tilt/lean) into virtual left-stick
+    // locomotion when the separate Room Scale test is OFF. In Room Scale
+    // mode, retain the original collision-resolved movement unchanged.
+    static const bool s6DisableLegacyHeadStick = []() {
+        const char* value = std::getenv("BARONY_VR_TEST_NO_HEAD_STICK");
+        return !(value && value[0] == '0' && value[1] == '\0'); // S16 validated defaults ON; explicit 0 opts out
+    }();
     // GA25 physical movement already passed native collision at exact tracked
     // displacement. Do not send the old approximate walking stick as well.
-    if(g_vrRoomScaleActive)g_xrRoomStickX=g_xrRoomStickY=0.f;
+    // S13: if room-scale is requested but unsupported (menus/multiplayer),
+    // never allow the legacy head-drift stick path to reappear.
+    if (g_vrRoomScaleActive || s6DisableLegacyHeadStick)
+    {
+        g_xrRoomStickX = g_xrRoomStickY = 0.f;
+    }
     // Send the room-scale movement sample through the SAME SDL input bridge.
     vrUpdateVirtualSDLGamepad();
     // Extract horizontal headset rotation from the tracked eye orientation.
@@ -5595,6 +5977,12 @@ void vrProcessOpenXRFrame(view_t* camera)
         vrHeadPitch = asinf(
             fmaxf(-1.0f, fminf(1.0f, pitchSin))
         );
+        // Step S2: OpenXR headset roll about its optical (+Z) axis.
+        // A neutral head has zero roll; the world view uses its inverse.
+        vrHeadRoll = atan2f(
+            2.0f * (q.w * q.z + q.x * q.y),
+            1.0f - 2.0f * (q.z * q.z + q.x * q.x)
+        );
         static int yawLogCounter = 0;
         if (++yawLogCounter >= 120)
         {
@@ -5606,6 +5994,7 @@ void vrProcessOpenXRFrame(view_t* camera)
     {
         vrHeadYaw = 0.0f;
         vrHeadPitch = 0.0f;
+        vrHeadRoll = 0.0f;
     }
     // Configure the stereo projection layer for this frame.
     g_xrProjectionLayer.space = g_xrReferenceSpace;
@@ -7213,6 +7602,42 @@ void vrLocateEyeViews(XrTime predictedDisplayTime)
 
             // Both eyes have valid tracking information for this frame.
             g_xrEyeViewsValid = true;
+            // S9C: diagnostic-only stereo and physical-scale preflight.
+            // No visual matrix, controller reach, or physical movement changes.
+            // A valid eye pair is logged once per launch, never per-frame.
+            if (const char* scaleAudit = std::getenv("BARONY_VR_TEST_SCALE_AUDIT"))
+            {
+                if (scaleAudit[0] == '1' && scaleAudit[1] == '\0')
+                {
+                    static unsigned int validAuditFrames = 0;
+                    if (++validAuditFrames == 90)
+                    {
+                        const auto& a = g_xrViews[0].pose;
+                        const auto& b = g_xrViews[1].pose;
+                        const float dx = b.position.x - a.position.x;
+                        const float dy = b.position.y - a.position.y;
+                        const float dz = b.position.z - a.position.z;
+                        const float ipd = std::sqrt(dx * dx + dy * dy + dz * dz);
+                        const float rawDot = a.orientation.x * b.orientation.x +
+                            a.orientation.y * b.orientation.y +
+                            a.orientation.z * b.orientation.z +
+                            a.orientation.w * b.orientation.w;
+                        const float qdot = std::max(0.f, std::min(1.f, std::fabs(rawDot)));
+                        const float relativeAngleDeg = 2.f * std::acos(qdot) * 180.f / PI;
+                        if (std::isfinite(ipd) && std::isfinite(relativeAngleDeg))
+                        {
+                            printlog("[VR S9C] stereo audit: IPD=%.5f m; local delta=(%.5f,%.5f,%.5f) m; per-eye orientation difference=%.4f deg",
+                                static_cast<double>(ipd), static_cast<double>(dx),
+                                static_cast<double>(dy), static_cast<double>(dz),
+                                static_cast<double>(relativeAngleDeg));
+                            printlog("[VR S9C] scale audit: tracking=%.3f entity units/m, tile=16 entity units; tile=%.3f m; visual_world_size=%.5f (S9B unverified)",
+                                static_cast<double>(VR_TRACKING_UNITS_PER_METER),
+                                16.0 / static_cast<double>(VR_TRACKING_UNITS_PER_METER),
+                                static_cast<double>(vrVisualSceneScale));
+                        }
+                    }
+                }
+            }
         }
         // Log successful tracking approximately once every 300 frames.
         static unsigned int trackingFrameCount = 0;
@@ -13086,10 +13511,308 @@ static void vrApplyHermitReturnView(view_t& eye, const VrHermitReturnView& ancho
 }
 
 
+// S11: opt-in live *perceived* world-size experiment. OpenXR optics and
+// projection are fixed. Change ONLY the eye-to-eye translation used for the
+// scene, relative to S10. It is not a physical collision/interaction scale.
+static float vrS10StereoFraction();
+static bool vrS12WorldPoseRequested();
+static bool vrS11LiveWorldScaleEnabled()
+{
+    static const bool enabled = []() {
+        const char* value = std::getenv("BARONY_VR_TEST_WORLD_SCALE_LIVE");
+        return value && value[0] == '1' && value[1] == '\0';
+    }();
+    return enabled && vrS10StereoFraction() > 0.f &&
+        !vrS12WorldPoseRequested();
+}
+
+// Sample once per *stereo frame*. Both eyes must use the SAME effective value
+// even if the calibration slider changes between their draw calls.
+static float g_vrS11FrameWorldSize = 1.0f;
+static Uint32 g_vrS11LastSampleTicks = 0;
+static void vrS11SampleWorldSizeForFrame()
+{
+    if (!vrS11LiveWorldScaleEnabled())
+    {
+        g_vrS11FrameWorldSize = 1.0f;
+        return;
+    }
+    const float target = std::isfinite(vrVisualSceneScale)
+        ? std::max(0.70f, std::min(1.30f, vrVisualSceneScale)) : 1.0f;
+    const Uint32 now = SDL_GetTicks();
+    // Smooth positional disparity changes across ~200 ms, avoiding an
+    // immediate stereo jump during a trigger-drag. Do not smooth each eye.
+    if (!g_vrS11LastSampleTicks)
+        g_vrS11FrameWorldSize = target;
+    else
+    {
+        const Uint32 dt = now - g_vrS11LastSampleTicks;
+        const float alpha = std::min(1.0f, static_cast<float>(dt) / 200.0f);
+        g_vrS11FrameWorldSize += (target - g_vrS11FrameWorldSize) * alpha;
+    }
+    g_vrS11LastSampleTicks = now;
+    static Uint32 lastLogTicks = 0;
+    static float lastLoggedTarget = -1.0f;
+    if (lastLoggedTarget < 0.f ||
+        (std::fabs(target - lastLoggedTarget) >= 0.025f &&
+         now - lastLogTicks >= 300u))
+    {
+        lastLoggedTarget = target;
+        lastLogTicks = now;
+        printlog("[VR S11] live scale target=%.3f effective=%.3f; stereo fraction=%.3f (visual-only)",
+            static_cast<double>(target),
+            static_cast<double>(g_vrS11FrameWorldSize),
+            static_cast<double>(vrS10StereoFraction() / g_vrS11FrameWorldSize));
+    }
+}
+
+// S10: opt-in, measured stereo translation with an independent shared HMD
+// visual anchor. S1 moved the world-eye view and accidentally let tracked
+// overlay models inherit that eye offset. No changes to game transforms,
+// collision, projectile origins, OpenXR projections or desktop rendering.
+static float vrS10StereoFraction()
+{
+    static const float fraction = []() {
+        const char* enable = std::getenv("BARONY_VR_TEST_STEREO_V2");
+        if (!enable || enable[0] != '1' || enable[1] != '\0')
+            return 0.0f;
+        const char* text = std::getenv("BARONY_VR_TEST_STEREO_FRACTION");
+        if (!text || !text[0])
+            return 0.5f; // conservative first headset experiment
+        char* end = nullptr;
+        const float value = std::strtof(text, &end);
+        return end != text && end && *end == '\0' &&
+            std::isfinite(value) && value >= 0.25f && value <= 1.0f
+                ? value : 0.0f; // invalid values fail closed
+    }();
+    return fraction;
+}
+
+static bool vrS10ApplyEyeOffset(view_t& eye, int index)
+{
+    if (vrS12WorldPoseRequested()) return false; // no compounded baselines
+    // Positive size -> smaller virtual eye baseline -> perceptually larger
+    // scene. S10 unflagged code remains exactly as before.
+    const float fraction = vrS10StereoFraction() /
+        (vrS11LiveWorldScaleEnabled() ? g_vrS11FrameWorldSize : 1.0f);
+    if (!(fraction > 0.f) || !g_xrEyeViewsValid || index < 0 || index > 1)
+        return false;
+    const XrVector3f& left = g_xrViews[0].pose.position;
+    const XrVector3f& right = g_xrViews[1].pose.position;
+    const float dx = right.x - left.x;
+    const float dy = right.y - left.y;
+    const float dz = right.z - left.z;
+    const float ipd = std::sqrt(dx * dx + dy * dy + dz * dz);
+    if (!std::isfinite(ipd) || ipd < 0.045f || ipd > 0.085f ||
+        !std::isfinite(eye.x) || !std::isfinite(eye.y) ||
+        !std::isfinite(eye.z) || !std::isfinite(eye.ang))
+        return false;
+    const XrVector3f& pos = g_xrViews[index].pose.position;
+    // OpenXR eye positions are expressed in LOCAL tracking space already;
+    // subtract the cyclopean midpoint exactly once. Do not apply HMD yaw
+    // again: the eye delta rotates with the headset in LOCAL space.
+    const float relX = pos.x - (left.x + right.x) * 0.5f;
+    const float relY = pos.y - (left.y + right.y) * 0.5f;
+    const float relZ = pos.z - (left.z + right.z) * 0.5f;
+    const float c = std::cos(static_cast<float>(eye.ang));
+    const float si = std::sin(static_cast<float>(eye.ang));
+    // Barony cameras use tile coordinates horizontally (16 entity units),
+    // but z maps through a 2x world-height convention in glBeginCamera.
+    const float tilesPerMeter = VR_TRACKING_UNITS_PER_METER / 16.0f;
+    eye.x += fraction * tilesPerMeter * (-relZ * c - relX * si);
+    eye.y += fraction * tilesPerMeter * (-relZ * si + relX * c);
+    eye.z -= fraction * 2.0f * VR_TRACKING_UNITS_PER_METER * relY;
+    static bool logged = false;
+    if (!logged)
+    {
+        logged = true;
+        printlog("[VR S10] experimental stereo ON: IPD=%.5f m strength=%.2f; overlays use shared head-center anchor; world size=%.4f",
+            static_cast<double>(ipd), static_cast<double>(fraction),
+            static_cast<double>(vrVisualSceneScale));
+    }
+    return true;
+}
+
+// S12: opt-in diagnostic physical-view translation for the DUNGEON only.
+// Unlike S10/S11, use the same meters->world mapping for eye separation and
+// physical head translation relative to one LOCAL-space entry anchor. Render
+// overlays from the translated shared head center, not from separate eyes.
+// No changes to player entity, weapon reach, physics, locomotion or OpenXR FOV.
+static bool vrS12WorldPoseRequested()
+{
+    static const bool enabled = []() {
+        const char* value = std::getenv("BARONY_VR_TEST_WORLD_POSE");
+        return value && value[0] == '1' && value[1] == '\0';
+    }();
+    return enabled;
+}
+static bool g_vrS12ReferenceValid = false;
+static bool g_vrS12FrameReady = false;
+static XrVector3f g_vrS12ReferenceHead{};
+static XrVector3f g_vrS12HeadDelta{};
+static float g_vrS12FrameWorldSize = 1.f;
+static Uint32 g_vrS12LastSampleTicks = 0;
+static void vrS12PreparePoseFrame(const view_t* camera)
+{
+    g_vrS12FrameReady = false;
+    if (!vrS12WorldPoseRequested()) return;
+    // The Room Scale gameplay branch already resolves physical player motion.
+    // Refuse a second visual translation rather than apply movement twice.
+    if (!camera || intro || !g_xrEyeViewsValid || !g_xrSessionRunning ||
+        g_vrRoomScaleEnabled || g_vrRoomScaleActive)
+    {
+        g_vrS12ReferenceValid = false;
+        g_vrS12LastSampleTicks = 0;
+        return;
+    }
+    const XrVector3f head{
+        (g_xrViews[0].pose.position.x + g_xrViews[1].pose.position.x) * .5f,
+        (g_xrViews[0].pose.position.y + g_xrViews[1].pose.position.y) * .5f,
+        (g_xrViews[0].pose.position.z + g_xrViews[1].pose.position.z) * .5f
+    };
+    const float eyeX = g_xrViews[1].pose.position.x - g_xrViews[0].pose.position.x;
+    const float eyeY = g_xrViews[1].pose.position.y - g_xrViews[0].pose.position.y;
+    const float eyeZ = g_xrViews[1].pose.position.z - g_xrViews[0].pose.position.z;
+    const float ipd = std::sqrt(eyeX * eyeX + eyeY * eyeY + eyeZ * eyeZ);
+    if (!std::isfinite(head.x) || !std::isfinite(head.y) || !std::isfinite(head.z) ||
+        !std::isfinite(ipd) || ipd < .045f || ipd > .085f ||
+        !std::isfinite(camera->x) || !std::isfinite(camera->y) ||
+        !std::isfinite(camera->z) || !std::isfinite(camera->ang))
+    {
+        g_vrS12ReferenceValid = false;
+        return;
+    }
+    if (!g_vrS12ReferenceValid || g_vrS12RebaseRequested)
+    {
+        g_vrS12ReferenceHead = head;
+        g_vrS12ReferenceValid = true;
+        g_vrS12RebaseRequested = false;
+        printlog("[VR S12] visual head anchor REBASED: LOCAL=(%.3f %.3f %.3f)m; IPD=%.5fm",
+            static_cast<double>(head.x), static_cast<double>(head.y),
+            static_cast<double>(head.z), static_cast<double>(ipd));
+    }
+    XrVector3f delta{
+        head.x - g_vrS12ReferenceHead.x,
+        head.y - g_vrS12ReferenceHead.y,
+        head.z - g_vrS12ReferenceHead.z
+    };
+    // Test one small positional motion envelope, not unbounded roomscale.
+    // Clamp rather than snap back if the user exceeds the test envelope.
+    if (std::fabs(delta.x) > .70f || std::fabs(delta.y) > .55f ||
+        std::fabs(delta.z) > .70f)
+    {
+        static Uint32 lastWarning = 0;
+        const Uint32 now = SDL_GetTicks();
+        if (now - lastWarning > 2000u)
+        {
+            lastWarning = now;
+            printlog("[VR S12] visual head offset out of test envelope; tracking delta=(%.3f %.3f %.3f)m; visual motion clamped",
+                static_cast<double>(delta.x), static_cast<double>(delta.y),
+                static_cast<double>(delta.z));
+        }
+        delta.x = std::max(-.70f, std::min(.70f, delta.x));
+        delta.y = std::max(-.55f, std::min(.55f, delta.y));
+        delta.z = std::max(-.70f, std::min(.70f, delta.z));
+    }
+    g_vrS12HeadDelta = delta;
+    const float target = std::isfinite(vrVisualSceneScale) ?
+        std::max(.70f, std::min(1.30f, vrVisualSceneScale)) : 1.f;
+    const Uint32 now = SDL_GetTicks();
+    if (!g_vrS12LastSampleTicks)
+        g_vrS12FrameWorldSize = target;
+    else
+    {
+        const Uint32 dt = now - g_vrS12LastSampleTicks;
+        const float alpha = std::min(1.f, static_cast<float>(dt) / 200.f);
+        g_vrS12FrameWorldSize += (target - g_vrS12FrameWorldSize) * alpha;
+    }
+    g_vrS12LastSampleTicks = now;
+    g_vrS12FrameReady = true;
+    static float lastLoggedTarget = -1.f;
+    static Uint32 lastLogTicks = 0;
+    if (lastLoggedTarget < 0.f ||
+        (std::fabs(target - lastLoggedTarget) >= .025f &&
+         now - lastLogTicks >= 300u))
+    {
+        lastLogTicks = now;
+        lastLoggedTarget = target;
+        printlog("[VR S12] pose scale target=%.3f effective=%.3f, visual units/m=%.3f, head delta=(%.3f %.3f %.3f)m; stereo FULL",
+            static_cast<double>(target), static_cast<double>(g_vrS12FrameWorldSize),
+            static_cast<double>(VR_TRACKING_UNITS_PER_METER / g_vrS12FrameWorldSize),
+            static_cast<double>(delta.x), static_cast<double>(delta.y),
+            static_cast<double>(delta.z));
+    }
+}
+// Mapping matches existing S10's Barony world yaw/tile/height conventions.
+static void vrS12ApplyMetersToCamera(view_t& eye, const XrVector3f& offset)
+{
+    const float unitsPerMeter = VR_TRACKING_UNITS_PER_METER /
+        g_vrS12FrameWorldSize;
+    const float tilesPerMeter = unitsPerMeter / 16.f;
+    const float c = std::cos(static_cast<float>(eye.ang));
+    const float si = std::sin(static_cast<float>(eye.ang));
+    eye.x += tilesPerMeter * (-offset.z * c - offset.x * si);
+    eye.y += tilesPerMeter * (-offset.z * si + offset.x * c);
+    eye.z -= 2.f * unitsPerMeter * offset.y;
+}
+static void vrS12ApplyEyePose(view_t& eye, int index)
+{
+    if (!g_vrS12FrameReady || index < 0 || index >= 2) return;
+    const XrVector3f head{
+        (g_xrViews[0].pose.position.x + g_xrViews[1].pose.position.x) * .5f,
+        (g_xrViews[0].pose.position.y + g_xrViews[1].pose.position.y) * .5f,
+        (g_xrViews[0].pose.position.z + g_xrViews[1].pose.position.z) * .5f
+    };
+    const XrVector3f relative{
+        g_vrS12HeadDelta.x + g_xrViews[index].pose.position.x - head.x,
+        g_vrS12HeadDelta.y + g_xrViews[index].pose.position.y - head.y,
+        g_vrS12HeadDelta.z + g_xrViews[index].pose.position.z - head.z
+    };
+    vrS12ApplyMetersToCamera(eye, relative);
+}
+static void vrS12QualityAuditOnce()
+{
+    static bool logged = false;
+    if (logged || !g_vrS12FrameReady) return;
+    logged = true;
+    GLint sampleBuffers = -1, samples = -1;
+    glGetIntegerv(GL_SAMPLE_BUFFERS, &sampleBuffers);
+    glGetIntegerv(GL_SAMPLES, &samples);
+    printlog("[VR S12] grain audit: eye=%ux%u, swapchain sampleCount=1; GL_SAMPLE_BUFFERS=%d GL_SAMPLES=%d GL_MULTISAMPLE=%d GL_DITHER=%d; no AA/filter changes",
+        static_cast<unsigned int>(g_xrEyeWidth),
+        static_cast<unsigned int>(g_xrEyeHeight),
+        static_cast<int>(sampleBuffers), static_cast<int>(samples),
+        glIsEnabled(GL_MULTISAMPLE) == GL_TRUE ? 1 : 0,
+        glIsEnabled(GL_DITHER) == GL_TRUE ? 1 : 0);
+}
+
+// Keep the correct per-eye projection/view matrix from glBeginCamera, but
+// generate tracked geometry from the common (unshifted) player head pose.
+// This prevents stereo translation from moving each hand/weapon twice.
+static view_t vrS10OverlayCamera(const view_t& eye, const view_t& center)
+{
+    view_t overlay = eye;
+    if (vrS10StereoFraction() > 0.f || g_vrS12FrameReady)
+    {
+        overlay.x = center.x;
+        overlay.y = center.y;
+        overlay.z = center.z;
+    }
+    return overlay;
+}
+
+
 void vrRenderStereoTestFrame(view_t* camera)
 {
+    // Reset this guard for every XR frame (including menu-only frames).
+    // S11 is opt-in, requires S10 stereo; desktop and ordinary launches retain
+    // the original S9 scaling path. A single sample is used for both eyes.
+    vrS11LiveWorldScaleActive =
+        (vrS11LiveWorldScaleEnabled() || vrS12WorldPoseRequested()) && camera != nullptr;
+    vrS11SampleWorldSizeForFrame();
     view_t trackedRoomCamera{};
     if(camera){trackedRoomCamera=vrRoomCamera(*camera);camera=&trackedRoomCamera;}
+    vrS12PreparePoseFrame(camera);
     // Verify that Barony's dungeon camera reaches the stereo renderer.
     static bool cameraLogged = false;
 
@@ -13463,6 +14186,8 @@ void vrRenderStereoTestFrame(view_t* camera)
         vrLeftCamera.globalLightModifierActive = camera->globalLightModifierActive;
         vrLeftCamera.luminance = camera->luminance;
         vrApplyHermitReturnView(vrLeftCamera, hermitReturnView);
+        if (vrS12WorldPoseRequested()) vrS12ApplyEyePose(vrLeftCamera, 0);
+        else vrS10ApplyEyeOffset(vrLeftCamera, 0);
     }
     // Use the headset eye resolution for left-eye dungeon rendering.
     vrCameraViewportEnabled = true;
@@ -13485,6 +14210,8 @@ void vrRenderStereoTestFrame(view_t* camera)
     if (camera != nullptr &&
         framebufferStatus == GL_FRAMEBUFFER_COMPLETE)
     {
+        // Capture actual framebuffer sample state for S12 grain diagnosis.
+        vrS12QualityAuditOnce();
         // Build the Quest 3's actual left-eye projection matrix.
         vrBuildEyeProjection(
             g_xrViews[0].fov,
@@ -13601,13 +14328,23 @@ void vrRenderStereoTestFrame(view_t* camera)
             vrHudShield->flags[INVISIBLE] = vrHudShieldWasInvisible;
             vrHudShield->flags[INVISIBLE_DITHER] = vrHudShieldWasDithered;
         }
-        vrRenderTrackedBaronyHands(&vrLeftCamera);
-        vrDrawSpatialHud(&vrLeftCamera);
+        view_t vrLeftOverlayCamera =
+            vrS10OverlayCamera(vrLeftCamera, *camera);
+        if (hermitReturnView.active)
+        {
+            vrLeftOverlayCamera.x = hermitReturnView.x;
+            vrLeftOverlayCamera.y = hermitReturnView.y;
+            vrLeftOverlayCamera.z = hermitReturnView.z;
+        }
+        if (g_vrS12FrameReady)
+            vrS12ApplyMetersToCamera(vrLeftOverlayCamera, g_vrS12HeadDelta);
+        vrRenderTrackedBaronyHands(&vrLeftOverlayCamera);
+        vrDrawSpatialHud(&vrLeftOverlayCamera);
         g_vrLoadedCrossbowBoltForEye = false;
         // STEP 638EA: Submit selected in-world aim art into EACH stereo eye.
         // Step 638DZ implemented the helper but never called it; the HUD
         // reticles are still rendered separately on the OpenXR GUI layer.
-        vrDrawControllerAimReticle(&vrLeftCamera);
+        vrDrawControllerAimReticle(&vrLeftOverlayCamera);
         // STEP 638ED: Stereo world guides only; GUI keeps block/charge cues.
         glEndCamera(&vrLeftCamera, false, map);
     }
@@ -13692,6 +14429,8 @@ void vrRenderStereoTestFrame(view_t* camera)
         vrRightCamera.globalLightModifierActive = camera->globalLightModifierActive;
         vrRightCamera.luminance = camera->luminance;
         vrApplyHermitReturnView(vrRightCamera, hermitReturnView);
+        if (vrS12WorldPoseRequested()) vrS12ApplyEyePose(vrRightCamera, 1);
+        else vrS10ApplyEyeOffset(vrRightCamera, 1);
     }
     // Future insertion point for rendering Barony's right-eye dungeon view.
     // Render Barony's dungeon into the right-eye VR texture.
@@ -13815,11 +14554,21 @@ void vrRenderStereoTestFrame(view_t* camera)
             vrHudShield->flags[INVISIBLE] = vrHudShieldWasInvisible;
             vrHudShield->flags[INVISIBLE_DITHER] = vrHudShieldWasDithered;
         }
-        vrRenderTrackedBaronyHands(&vrRightCamera);
-        vrDrawSpatialHud(&vrRightCamera);
+        view_t vrRightOverlayCamera =
+            vrS10OverlayCamera(vrRightCamera, *camera);
+        if (hermitReturnView.active)
+        {
+            vrRightOverlayCamera.x = hermitReturnView.x;
+            vrRightOverlayCamera.y = hermitReturnView.y;
+            vrRightOverlayCamera.z = hermitReturnView.z;
+        }
+        if (g_vrS12FrameReady)
+            vrS12ApplyMetersToCamera(vrRightOverlayCamera, g_vrS12HeadDelta);
+        vrRenderTrackedBaronyHands(&vrRightOverlayCamera);
+        vrDrawSpatialHud(&vrRightOverlayCamera);
         g_vrLoadedCrossbowBoltForEye = false;
         // STEP 638EA: Same in-world selected reticles for the right eye.
-        vrDrawControllerAimReticle(&vrRightCamera);
+        vrDrawControllerAimReticle(&vrRightOverlayCamera);
         // STEP 638ED: Stereo world guides only; GUI keeps block/charge cues.
         glEndCamera(&vrRightCamera, false, map);
     }
@@ -13844,6 +14593,7 @@ void vrRenderStereoTestFrame(view_t* camera)
     // Restore normal desktop camera behavior after VR rendering.
     vrCameraTrackingEnabled = false;
     vrEyeProjectionEnabled = false;
+    vrS11LiveWorldScaleActive = false;
     // Restore Barony's original framebuffer.
     g_glBindFramebuffer(
         GL_FRAMEBUFFER,
